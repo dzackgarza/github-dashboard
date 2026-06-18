@@ -80,10 +80,7 @@ export default function WelcomeDashboard() {
   const {
     repos,
     projectTags,
-    isTokenConfigured,
     githubUser,
-    onGlobalRefresh,
-    isSyncingGlobal,
     openTabs
   } = useWorkspace();
 
@@ -271,25 +268,13 @@ export default function WelcomeDashboard() {
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-white flex items-center gap-2 truncate">
               <span>{githubUser?.name || githubUser?.login || "Guest Developer Workspace"}</span>
-              {isTokenConfigured && (
-                <span className="text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-900 px-1.5 py-0.5 rounded uppercase font-mono">
-                  Personal Token Connected
-                </span>
-              )}
             </h1>
             <p className="text-xs text-gray-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
               <span>@{githubUser?.login || "anonymous"}</span>
-              <span>•</span>
-              <span className="text-[#007acc] hover:underline cursor-pointer" onClick={() => window.open(githubUser?.html_url || "https://github.com", "_blank", "noopener,noreferrer")}>
-                View GitHub Profile
-              </span>
-              <span>•</span>
-              <span className="font-mono text-[11px] text-gray-500">Ctrl+P to open Commands</span>
             </p>
           </div>
         </div>
 
-        {/* Sync Controls */}
         <div className="flex items-center gap-2 md:self-center shrink-0 select-none">
           {isLatchingDetails && (
             <div className="text-xs bg-[#1a1a1c] border border-[#2d2d2d] px-2 py-1 rounded text-blue-400 font-mono flex items-center gap-1.5 animate-pulse">
@@ -305,15 +290,6 @@ export default function WelcomeDashboard() {
               <span>Cached {formatDistanceToNow(inboxCacheLoadedAt)} ago</span>
             </div>
           )}
-          
-          <button
-            onClick={onGlobalRefresh}
-            disabled={isSyncingGlobal}
-            className="px-3.5 py-1.5 bg-[#252526] hover:bg-[#2d2d2f] text-gray-200 border border-[#3e3e3e] rounded text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw size={12} className={isSyncingGlobal ? "animate-spin" : ""} />
-            <span>Sync with GitHub</span>
-          </button>
         </div>
       </div>
 
@@ -607,7 +583,6 @@ export default function WelcomeDashboard() {
                 {projectTags.length === 0 ? (
                   <div className="text-center py-6 text-xs text-gray-500 font-mono italic">
                     <p>No projects found.</p>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Use Ctrl+P to create a project.</p>
                   </div>
                 ) : (
                   projectTags.map((tag) => (

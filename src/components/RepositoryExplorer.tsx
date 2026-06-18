@@ -5,10 +5,6 @@ import {
   GitPullRequest,
   AlertCircle,
   Clock,
-  Trash2,
-  FolderPlus,
-  Plus,
-  ChevronRight,
   ArrowUpDown,
   CircleDot,
   Fingerprint,
@@ -22,9 +18,7 @@ import {
   ChevronLeft,
   Calendar,
   Layers,
-  Inbox,
-  Workflow,
-  Compass
+  Inbox
 } from "lucide-react";
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
@@ -36,11 +30,8 @@ export default function RepositoryExplorer() {
     projectTags,
     syncTimestamps,
     isSyncing,
-    onForceSync,
     onAddProjectTag,
     onRemoveRepoFromTag,
-    onCreateProjectTag,
-    onDeleteProjectTag,
     openTabs,
     activeRepoFullName,
     openRepo,
@@ -62,11 +53,6 @@ export default function RepositoryExplorer() {
   const [draggedRepo, setDraggedRepo] = useState<string | null>(null);
   const [activeDragOverProjId, setActiveDragOverProjId] = useState<string | null>(null);
   const [isDragOverTrash, setIsDragOverTrash] = useState(false);
-
-  // Project management inputs
-  const [newProjName, setNewProjName] = useState("");
-  const [newProjColor, setNewProjColor] = useState("#3b82f6");
-  const [showCreateForm, setShowCreateForm] = useState(false);
 
   // Dashboard Tab selection inside repo dashboard
   const [dashTab, setDashTab] = useState<"issues" | "prs" | "branches">("issues");
@@ -254,16 +240,6 @@ export default function RepositoryExplorer() {
     }
   };
 
-  // Create Project Helper
-  const handleCreateProjSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newProjName.trim()) {
-      onCreateProjectTag(newProjName.trim(), newProjColor);
-      setNewProjName("");
-      setShowCreateForm(false);
-    }
-  };
-
   const formatDate = (isoString?: string) => {
     if (!isoString) return "N/A";
     return new Date(isoString).toLocaleDateString(undefined, {
@@ -401,17 +377,6 @@ export default function RepositoryExplorer() {
               </div>
             </div>
 
-            {/* Quick sync controls */}
-            <div className="pt-4 border-t border-[#3e3e3e]">
-              <button
-                onClick={() => onForceSync(selectedRepo.owner.login, selectedRepo.name)}
-                disabled={isSyncing[selectedRepo.full_name]}
-                className="w-full py-2 bg-[#007acc] hover:bg-[#0062a3] disabled:bg-gray-800 text-white font-semibold rounded text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw size={12} className={isSyncing[selectedRepo.full_name] ? "animate-spin" : ""} />
-                <span>{isSyncing[selectedRepo.full_name] ? "Polling updates..." : "Force ETag Poll Sync"}</span>
-              </button>
-            </div>
           </div>
 
           {/* Detailed Lists tabs content right pane */}
@@ -749,6 +714,12 @@ export default function RepositoryExplorer() {
                         draggable={true}
                         onDragStart={(e) => handleDragStart(e, repo.full_name)}
                         onDragEnd={handleDragEnd}
+                        onClick={(e) => {
+                          if ((e.target as HTMLElement).closest("button")) {
+                            return;
+                          }
+                          openRepo(repo.full_name);
+                        }}
                         onTouchStart={(e) => handleTouchStart(e, repo)}
                         onTouchEnd={handleTouchEnd}
                         onContextMenu={(e) => {
@@ -756,7 +727,7 @@ export default function RepositoryExplorer() {
                           setTouchMenuRepo(repo);
                           setTouchMenuPos({ x: e.clientX, y: e.clientY });
                         }}
-                        className={`bg-[#222224] border rounded p-4 flex flex-col justify-between gap-4 shadow transition-all cursor-grab active:cursor-grabbing relative overflow-hidden select-none hover:shadow-md ${
+                        className={`bg-[#222224] border rounded p-4 flex flex-col justify-between gap-4 shadow transition-all cursor-pointer active:cursor-grabbing relative overflow-hidden select-none hover:shadow-md ${
                           isDragged
                             ? "opacity-40 border-dashed border-amber-500 bg-[#3a2010]"
                             : "border-[#3e3e3e]/80 hover:border-gray-500"
@@ -833,7 +804,10 @@ export default function RepositoryExplorer() {
                                   <button
                                     key={p.id}
                                     type="button"
-                                    onClick={() => openProject(p.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openProject(p.id);
+                                    }}
                                     className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold leading-none border"
                                     style={{
                                       backgroundColor: `${p.color}15`,
@@ -846,27 +820,7 @@ export default function RepositoryExplorer() {
                                 ))
                               )}
                             </div>
-
-                            {/* Click to open specific repo dashboard */}
-                            <button
-                              onClick={() => openRepo(repo.full_name)}
-                              className="px-2.5 py-1 bg-[#2e2e2f] hover:bg-[#343435] border border-gray-700/60 rounded text-white text-[10.5px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
-                            >
-                              <span>Open Repo</span>
-                              <ChevronRight size={10} />
-                            </button>
                           </div>
-                        </div>
-
-                        {/* Large Touch Hotspot icon overlay for desktop and touchscreen selection */}
-                        <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openRepo(repo.full_name)}
-                            className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded cursor-help"
-                            title="Open repository page"
-                          >
-                            <Workflow size={11} />
-                          </button>
                         </div>
                       </div>
                     );
@@ -888,30 +842,7 @@ export default function RepositoryExplorer() {
             {touchMenuRepo.name} options
           </div>
 
-          <button
-            onClick={() => {
-              openRepo(touchMenuRepo.full_name);
-              setTouchMenuRepo(null);
-            }}
-            className="w-full text-left px-3.5 py-2 hover:bg-[#007acc] hover:text-white transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <Compass size={12} />
-            <span>Open Repo</span>
-          </button>
-
-          <button
-            onClick={() => {
-              onForceSync(touchMenuRepo.owner.login, touchMenuRepo.name);
-              setTouchMenuRepo(null);
-            }}
-            className="w-full text-left px-3.5 py-2 hover:bg-[#007acc] hover:text-white transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <RefreshCw size={12} />
-            <span>Force Delta Refresh</span>
-          </button>
-
-          {/* Quick inline Projects mapping options */}
-          <div className="border-t border-gray-800 mt-1">
+          <div>
             <div className="px-3.5 py-1 text-[9px] font-mono font-bold text-[#f59e0b] uppercase select-none">
               Assign to Project
             </div>

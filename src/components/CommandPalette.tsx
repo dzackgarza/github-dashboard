@@ -60,7 +60,7 @@ export default function CommandPalette({
     }
   }, [isOpen]);
 
-  // Handle global shortcuts (Ctrl+P, Cmd+P, Escape)
+  // Handle global shortcuts and Escape.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape closes current submode or whole palette
@@ -329,7 +329,7 @@ export default function CommandPalette({
               type="text"
               placeholder={
                 subMode === "none" 
-                  ? "Type a command to execute globally... (Ctrl+P to trigger)" 
+                  ? "Type a command..."
                   : "Filter list items..."
               }
               className="w-full bg-transparent border-none outline-none text-sm text-white placeholder-gray-500 font-sans focus:ring-0"

@@ -1,23 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import {
-  FolderGit2,
-  Database,
-  RefreshCw,
-  Settings as SettingsIcon,
-  Home,
-  X,
-  PlayCircle,
-  XCircle,
-  HelpCircle,
-  CheckCircle,
-  Github,
-  Award,
-  BookOpen,
-  Sliders,
-  ChevronRight,
-  ShieldCheck,
-  CodeXml
-} from "lucide-react";
+import { Github } from "lucide-react";
 import VSCodeActivityBar from "./components/VSCodeActivityBar";
 import VSCodeSidebar from "./components/VSCodeSidebar";
 import WelcomeDashboard from "./components/WelcomeDashboard";
@@ -197,7 +179,7 @@ export default function App() {
   const [isSyncingGlobal, setIsSyncingGlobal] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  // Key bindings listener for Ctrl+P or Cmd+P
+  // Keyboard shortcut listener for opening the command palette.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "p") {
@@ -407,7 +389,7 @@ export default function App() {
     }
   };
 
-  // Project Category Tags Creators & Deletion
+  // Project creation and deletion are command-palette actions.
   const handleCreateProjectTag = async (name: string, color: string) => {
     const newTag: ProjectTag = {
       id: `proj-${Date.now()}`,
@@ -538,12 +520,9 @@ export default function App() {
     setSelectedProjectFilter,
     openRepo: handleOpenRepo,
     openProject: handleOpenProject,
-    onForceSync: handleForceSyncRepo,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
     onRemoveRepoFromTag: handleRemoveRepoFromTag,
-    onCreateProjectTag: handleCreateProjectTag,
-    onDeleteProjectTag: handleDeleteProjectTag,
     openTabs: handleOpenTab,
   }), [
     repos,
@@ -570,7 +549,6 @@ export default function App() {
           activeView={activeView}
           setActiveView={handleToggleView}
           isTokenConfigured={isTokenConfigured}
-          rateRemaining={rateLimit.remaining}
           sidebarOpen={sidebarOpen}
         />
 
@@ -583,13 +561,10 @@ export default function App() {
               projectTags={projectTags}
               syncTimestamps={syncTimestamps}
               isSyncing={isSyncing}
-              onForceSync={handleForceSyncRepo}
               onSelectIssue={(owner, repo, data) => handleOpenTab(`issue-${owner}-${repo}-${data.number}`, "issue", `#${data.number}: ${data.title}`, owner, repo, data.number)}
               onSelectPR={(owner, repo, data) => handleOpenTab(`pr-${owner}-${repo}-${data.number}`, "pr", `PR #${data.number}: ${data.title}`, owner, repo, data.number)}
               onAddProjectTag={handleAddProjectTag}
               onRemoveRepoFromTag={handleRemoveRepoFromTag}
-              onCreateProjectTag={handleCreateProjectTag}
-              onDeleteProjectTag={handleDeleteProjectTag}
               openTabs={handleOpenTab}
               activeTabId={activeTabId}
               onClose={() => setSidebarOpen(false)}
@@ -607,21 +582,6 @@ export default function App() {
           />
         </div>
     </div>
-
-      {/* 2. Visual Status Bar */}
-      <div className="h-6 bg-[#007acc] flex items-center px-3 text-[11px] text-white space-x-4 select-none shrink-0 font-sans shadow-inner border-t border-blue-600/30">
-        <div className="flex items-center">
-          <span className="font-semibold">main</span>
-        </div>
-        <div className="flex items-center">
-          <span className="mr-1">↻</span>
-          <span>Workspace Refreshed</span>
-        </div>
-        <div className="ml-auto flex items-center space-x-3.5">
-          <span>UTF-8</span>
-          <span>TypeScript</span>
-        </div>
-      </div>
 
       <CommandPalette
         isOpen={isCommandPaletteOpen}

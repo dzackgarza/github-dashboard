@@ -16,12 +16,9 @@ export interface WorkspaceContextType {
   setSelectedProjectFilter: (filter: string) => void;
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
-  onForceSync: (owner: string, repo: string) => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
-  onCreateProjectTag: (name: string, color: string) => void;
-  onDeleteProjectTag: (tagId: string) => void;
   openTabs: (id: string, type: Tab["type"], title: string, owner?: string, repo?: string, number?: number) => void;
 }
 

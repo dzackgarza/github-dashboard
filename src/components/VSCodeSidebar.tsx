@@ -9,12 +9,9 @@ import {
   AlertCircle,
   Hash,
   Search,
-  RefreshCw,
-  Plus,
   FolderGit,
   Tags,
   Compass,
-  TrendingUp,
   CircleDot,
   X
 } from "lucide-react";
@@ -27,13 +24,10 @@ interface VSCodeSidebarProps {
   projectTags: ProjectTag[];
   syncTimestamps: Record<string, string>;
   isSyncing: Record<string, boolean>;
-  onForceSync: (owner: string, repo: string) => void;
   onSelectIssue: (owner: string, repoName: string, issue: Issue) => void;
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
-  onCreateProjectTag: (name: string, color: string) => void;
-  onDeleteProjectTag: (tagId: string) => void;
   openTabs: (id: string, type: "issue" | "pr" | "settings" | "welcome", title: string, owner?: string, repo?: string, number?: number) => void;
   activeTabId: string;
   onClose?: () => void;
@@ -47,13 +41,10 @@ export default function VSCodeSidebar({
   projectTags,
   syncTimestamps,
   isSyncing,
-  onForceSync,
   onSelectIssue,
   onSelectPR,
   onAddProjectTag,
   onRemoveRepoFromTag,
-  onCreateProjectTag,
-  onDeleteProjectTag,
   openTabs,
   activeTabId,
   onClose,
@@ -81,11 +72,6 @@ export default function VSCodeSidebar({
     y: number;
     repoFullName: string;
   } | null>(null);
-
-  // New Project creation modal-less forms
-  const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectColor, setNewProjectColor] = useState("#3b82f6");
-  const [showAddProjectForm, setShowAddProjectForm] = useState(false);
 
   // Handle right click menu cleanup
   useEffect(() => {
@@ -143,17 +129,6 @@ export default function VSCodeSidebar({
     if (diffHrs < 24) return `${diffHrs}h ago`;
     return new Date(isoString).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   };
-
-  const colors = [
-    { value: "#3b82f6", name: "Blue" },
-    { value: "#10b981", name: "Green" },
-    { value: "#ef4444", name: "Red" },
-    { value: "#a855f7", name: "Purple" },
-    { value: "#f59e0b", name: "Amber" },
-    { value: "#14b8a6", name: "Teal" },
-    { value: "#f43f5e", name: "Rose" },
-    { value: "#64748b", name: "Slate" }
-  ];
 
   const filteredRepos = repos.filter((repo) => {
     const matchesSearch =
@@ -273,19 +248,6 @@ export default function VSCodeSidebar({
                               >
                                 {syncing ? "Syncing..." : formatTimeAgo(syncTime)}
                               </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onForceSync(repo.owner.login, repo.name);
-                                }}
-                                disabled={syncing}
-                                className={`text-gray-400 hover:text-white p-0.5 rounded hover:bg-[#3c3c3c] transition-colors cursor-pointer ${
-                                  syncing ? "animate-spin" : ""
-                                }`}
-                                title="Force incremental sync check using cached ETags"
-                              >
-                                <RefreshCw size={11} />
-                              </button>
                             </div>
                           </div>
 
@@ -454,69 +416,12 @@ export default function VSCodeSidebar({
                   <span className="text-[10px] text-gray-300 w-3 text-center">{projectsExpanded ? "▼" : "▶"}</span>
                   <span className="tracking-wider uppercase text-[11px] font-bold">PROJECTS</span>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowAddProjectForm(!showAddProjectForm);
-                  }}
-                  className="text-gray-300 hover:text-white transition-colors cursor-pointer"
-                  title="Make New Category Tag"
-                >
-                  <Plus size={14} />
-                </button>
               </div>
 
               {projectsExpanded && (
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 custom-scrollbar">
-                  {/* Create New Category Form */}
-                  {showAddProjectForm && (
-                    <div className="p-3 mx-2.5 my-1.5 bg-[#1e1e1e] border border-gray-700/60 rounded space-y-2 select-none shadow-xl">
-                      <div className="text-[10px] font-mono text-gray-400 font-semibold uppercase">New Category Tag</div>
-                      <input
-                        type="text"
-                        placeholder="Tag name (e.g., Critical Tasks)"
-                        className="w-full bg-[#2d2d2d] border border-gray-700 rounded p-1 text-white text-xs outline-none focus:border-[#007acc] leading-relaxed"
-                        value={newProjectName}
-                        onChange={(e) => setNewProjectName(e.target.value)}
-                      />
-                      <div className="flex items-center gap-1 py-1">
-                        {colors.map((c) => (
-                          <button
-                            key={c.value}
-                            onClick={() => setNewProjectColor(c.value)}
-                            className={`w-4 h-4 rounded-full border-2 cursor-pointer ${
-                              newProjectColor === c.value ? "border-white" : "border-transparent"
-                            }`}
-                            style={{ backgroundColor: c.value }}
-                            title={c.name}
-                          />
-                        ))}
-                      </div>
-                      <div className="flex justify-end gap-1.5 text-[10.5px]">
-                        <button
-                          onClick={() => setShowAddProjectForm(false)}
-                          className="px-2 py-0.5 text-gray-400 hover:text-white transition-colors bg-transparent border border-gray-700 rounded hover:bg-gray-800"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (newProjectName.trim()) {
-                              onCreateProjectTag(newProjectName.trim(), newProjectColor);
-                              setNewProjectName("");
-                              setShowAddProjectForm(false);
-                            }
-                          }}
-                          className="px-2.5 py-0.5 bg-[#007acc] text-white rounded transition-colors hover:bg-[#0062a3]"
-                        >
-                          Create
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
                   {projectTags.length === 0 ? (
-                    <div className="text-gray-500 italic px-6 py-2">Right click repose to tag them.</div>
+                    <div className="text-gray-500 italic px-6 py-2">Create a project from the command palette.</div>
                   ) : (
                     projectTags.map((tag) => (
                       <div key={tag.id} className="group/tag select-none mb-1">
@@ -533,16 +438,6 @@ export default function VSCodeSidebar({
                             <span className="font-mono font-medium truncate">{tag.name}</span>
                             <span className="text-[10px] text-gray-500 shrink-0">({tag.repos.length})</span>
                           </div>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteProjectTag(tag.id);
-                            }}
-                            className="opacity-0 group-hover/tag:opacity-100 text-gray-400 hover:text-red-400 transition-opacity p-0.5 cursor-pointer shrink-0"
-                            title={`Delete group ${tag.name}`}
-                          >
-                            <TrashButton />
-                          </button>
                         </div>
 
                         {/* List of repos inside this Tag Group Accordion */}
@@ -590,17 +485,16 @@ export default function VSCodeSidebar({
         </div>
       )}
 
-      {/* Sync Logging Panel Side summary when toggled */}
       {activeView === "sync" && (
         <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1e]">
-          <div className="p-3 text-[11px] font-mono text-emerald-400 bg-emerald-950/20 border-b border-emerald-950/40 select-text leading-relaxed">
+          <div className="p-3 text-[11px] font-mono text-gray-300 bg-[#252526] border-b border-[#3e3e3e] select-text leading-relaxed">
             <div className="font-bold uppercase tracking-wider mb-1 flex items-center gap-1.5">
-              <TrendingUp size={12} /> Optimization Engine Live
+              GitHub Sync Log
             </div>
-            Delta-sync algorithm ensures conditional polling matches ETags, preserving up to 100% of Rate Limits on static fetches.
+            Repository update times from the current session.
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-1.5 custom-scrollbar text-[11px] font-mono leading-relaxed select-text">
-            <div className="text-gray-500 font-bold uppercase p-1">Active sync transactions:</div>
+            <div className="text-gray-500 font-bold uppercase p-1">Repositories</div>
             {repos.map((repo) => (
               <div key={repo.id} className="p-1 px-2 bg-[#2d2d2d] rounded flex items-center justify-between">
                 <span className="text-gray-300 truncate font-semibold" title={repo.full_name}>{repo.name}</span>
@@ -613,26 +507,18 @@ export default function VSCodeSidebar({
         </div>
       )}
 
-      {/* Settings View side panel content */}
       {activeView === "settings" && (
         <div className="flex-1 p-4 overflow-y-auto text-xs space-y-4 leading-relaxed font-sans scrollbar-thin">
           <div className="bg-[#2d2d2d] p-3.5 rounded border border-gray-700/60 shadow-md">
             <h4 className="text-white font-semibold flex items-center gap-2 mb-2 font-mono text-sm uppercase text-sky-400 leading-snug">
-              Authorization Info
+              GitHub Token
             </h4>
             <p className="text-gray-300 text-[11.5px]">
-              This dashboard utilizes the server-side environment variable{" "}
+              The server reads{" "}
               <code className="text-[#007acc] bg-[#1e1e1e] p-0.5 rounded font-mono text-[11px]">GITHUB_TOKEN</code>.
             </p>
             <p className="text-gray-400 mt-2 text-[11.5px]">
               If the token is absent, the server stops before serving the dashboard.
-            </p>
-          </div>
-
-          <div className="bg-[#2d2d2d] p-3 rounded text-gray-400 space-y-2 border border-gray-700/60 shadow-md">
-            <div className="text-white font-semibold font-mono text-xs uppercase text-amber-500">Rate Limit Caching</div>
-            <p className="text-[11px]">
-              All HTTP GET queries are cached using state maps on Express. Triggering a delta sync checks with GitHub using conditional tags to maintain data without wasting requests.
             </p>
           </div>
         </div>
@@ -649,7 +535,7 @@ export default function VSCodeSidebar({
             Tag Repositories to Project
           </div>
           {projectTags.length === 0 ? (
-            <div className="px-3 py-2 text-gray-500 italic">No project tags available. Create one in the panel below!</div>
+            <div className="px-3 py-2 text-gray-500 italic">Create a project from the command palette.</div>
           ) : (
             projectTags.map((tag) => {
               const isAdded = tag.repos.includes(contextMenu.repoFullName);
@@ -674,24 +560,5 @@ export default function VSCodeSidebar({
         </div>
       )}
     </div>
-  );
-}
-
-// Inline trash icon SVG
-function TrashButton() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="11"
-      height="11"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-    </svg>
   );
 }
