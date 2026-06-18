@@ -26,6 +26,57 @@ import {
 import { useWorkspace } from "../context/WorkspaceContext";
 import { Issue, PullRequest, Repo } from "../types";
 
+type InboxActivityItem = (Issue | PullRequest) & {
+  repoName: string;
+  repoFullName: string;
+  compositeId: string;
+  type: "issue" | "pr";
+};
+
+interface InboxCachePayload {
+  repoSignature: string;
+  cachedAt: string;
+  items: InboxActivityItem[];
+}
+
+const INBOX_CACHE_PREFIX = "github_dashboard_inbox_cache";
+
+function getInboxCacheKey(login: string) {
+  return `${INBOX_CACHE_PREFIX}:${login}`;
+}
+
+function getRepoSignature(repos: Repo[]) {
+  return repos
+    .map((repo) => `${repo.full_name}:${repo.updated_at}`)
+    .sort()
+    .join("|");
+}
+
+function readInboxCache(cacheKey: string, repoSignature: string): InboxCachePayload | null {
+  const rawCache = localStorage.getItem(cacheKey);
+  if (!rawCache) {
+    return null;
+  }
+
+  const parsed = JSON.parse(rawCache) as InboxCachePayload;
+  if (parsed.repoSignature !== repoSignature || !Array.isArray(parsed.items)) {
+    localStorage.removeItem(cacheKey);
+    return null;
+  }
+
+  return parsed;
+}
+
+function writeInboxCache(cacheKey: string, repoSignature: string, items: InboxActivityItem[]) {
+  const payload: InboxCachePayload = {
+    repoSignature,
+    cachedAt: new Date().toISOString(),
+    items,
+  };
+  localStorage.setItem(cacheKey, JSON.stringify(payload));
+  return payload;
+}
+
 export default function WelcomeDashboard() {
   const {
     repos,
@@ -44,23 +95,49 @@ export default function WelcomeDashboard() {
   const [inboxFilter, setInboxFilter] = useState<"all" | "issues" | "prs" | "high">("all");
 
   // Flat list of combined issue and pull request activity items
-  const [activityItems, setActivityItems] = useState<any[]>([]);
+  const [activityItems, setActivityItems] = useState<InboxActivityItem[]>([]);
   const [isLatchingDetails, setIsLatchingDetails] = useState(false);
   const [fetchProgress, setFetchProgress] = useState({ done: 0, total: 0 });
+  const [inboxCacheLoadedAt, setInboxCacheLoadedAt] = useState<string | null>(null);
+  const [isShowingCachedInbox, setIsShowingCachedInbox] = useState(false);
 
   // Stream data from each of the active repos in parallel using our ETag efficient endpoints
   useEffect(() => {
-    if (!repos || repos.length === 0) {
+    if (!repos || repos.length === 0 || !githubUser?.login) {
       setActivityItems([]);
+      setInboxCacheLoadedAt(null);
+      setIsShowingCachedInbox(false);
       return;
     }
 
     let isMounted = true;
+    const repoSignature = getRepoSignature(repos);
+    const cacheKey = getInboxCacheKey(githubUser.login);
+
+    try {
+      const cachedInbox = readInboxCache(cacheKey, repoSignature);
+      if (cachedInbox) {
+        setActivityItems(cachedInbox.items);
+        setInboxCacheLoadedAt(cachedInbox.cachedAt);
+        setIsShowingCachedInbox(true);
+      } else {
+        setActivityItems([]);
+        setInboxCacheLoadedAt(null);
+        setIsShowingCachedInbox(false);
+      }
+    } catch (err) {
+      localStorage.removeItem(cacheKey);
+      setActivityItems([]);
+      setInboxCacheLoadedAt(null);
+      setIsShowingCachedInbox(false);
+      console.error("Inbox cache could not be read", err);
+    }
+
     setIsLatchingDetails(true);
     setFetchProgress({ done: 0, total: repos.length });
 
-    const accumIssues: any[] = [];
-    const accumPRs: any[] = [];
+    const accumIssues: InboxActivityItem[] = [];
+    const accumPRs: InboxActivityItem[] = [];
     let completed = 0;
 
     const pullAllRepoData = async () => {
@@ -83,7 +160,7 @@ export default function WelcomeDashboard() {
                     repoFullName: repo.full_name,
                     compositeId: `issue-${repo.full_name}-${issue.number}`,
                     type: "issue"
-                  });
+                  } as InboxActivityItem);
                 }
               });
             }
@@ -101,7 +178,7 @@ export default function WelcomeDashboard() {
                   repoFullName: repo.full_name,
                   compositeId: `pr-${repo.full_name}-${pr.number}`,
                   type: "pr"
-                });
+                } as InboxActivityItem);
               });
             }
           }
@@ -122,7 +199,10 @@ export default function WelcomeDashboard() {
         const combined = [...accumIssues, ...accumPRs].sort(
           (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
+        const cachePayload = writeInboxCache(cacheKey, repoSignature, combined);
         setActivityItems(combined);
+        setInboxCacheLoadedAt(cachePayload.cachedAt);
+        setIsShowingCachedInbox(false);
         setIsLatchingDetails(false);
       }
     };
@@ -132,7 +212,7 @@ export default function WelcomeDashboard() {
     return () => {
       isMounted = false;
     };
-  }, [repos]);
+  }, [repos, githubUser?.login]);
 
   // Compute profile aggregations
   const totalStars = useMemo(() => {
@@ -223,7 +303,15 @@ export default function WelcomeDashboard() {
           {isLatchingDetails && (
             <div className="text-xs bg-[#1a1a1c] border border-[#2d2d2d] px-2 py-1 rounded text-blue-400 font-mono flex items-center gap-1.5 animate-pulse">
               <RefreshCw size={11} className="animate-spin text-blue-500" />
-              <span>Fetching {fetchProgress.done}/{fetchProgress.total} repos...</span>
+              <span>
+                {isShowingCachedInbox ? "Updating cached Inbox" : "Fetching Inbox"} {fetchProgress.done}/{fetchProgress.total}
+              </span>
+            </div>
+          )}
+          {isShowingCachedInbox && inboxCacheLoadedAt && (
+            <div className="text-xs bg-amber-950/30 border border-amber-900 px-2 py-1 rounded text-amber-300 font-mono flex items-center gap-1.5">
+              <Clock size={11} />
+              <span>Cached {formatDistanceToNow(inboxCacheLoadedAt)} ago</span>
             </div>
           )}
           
