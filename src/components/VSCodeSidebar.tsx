@@ -28,6 +28,7 @@ interface VSCodeSidebarProps {
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
+  openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
   openTabs: (id: string, type: "issue" | "pr" | "settings" | "welcome", title: string, owner?: string, repo?: string, number?: number) => void;
   activeTabId: string;
@@ -46,6 +47,7 @@ export default function VSCodeSidebar({
   onSelectPR,
   onAddProjectTag,
   onRemoveRepoFromTag,
+  openRepo,
   openProject,
   openTabs,
   activeTabId,
@@ -119,9 +121,8 @@ export default function VSCodeSidebar({
     });
   };
 
-  // Helper sync reporter
-  const formatTimeAgo = (isoString?: string) => {
-    if (!isoString) return "Never synced";
+  // Helper relative time reporter
+  const formatTimeAgo = (isoString: string) => {
     const diffMs = Date.now() - new Date(isoString).getTime();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
@@ -209,8 +210,6 @@ export default function VSCodeSidebar({
                   ) : (
                     filteredRepos.map((repo) => {
                       const isExpanded = !!expandedRepos[repo.full_name];
-                      const syncTime = syncTimestamps[repo.full_name];
-                      const syncing = !!isSyncing[repo.full_name];
                       const repoProjects = projectTags.filter((tag) =>
                         tag.repos.includes(repo.full_name),
                       );
@@ -226,7 +225,7 @@ export default function VSCodeSidebar({
                             className={`py-1.5 pr-2.5 pl-4 hover:bg-[#2a2d2e] cursor-pointer group ${
                               isExpanded ? "text-white" : "text-gray-400"
                             }`}
-                            title="Right-click to attach tagging groups or check sync histories"
+                            title="Right-click for repository actions"
                           >
                             <div className="flex min-w-0 items-start gap-2">
                               <span className="text-[#858585] shrink-0">
@@ -244,10 +243,8 @@ export default function VSCodeSidebar({
                                   {repo.full_name}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-gray-500">
-                                  <span title={`Synced ${formatTimeAgo(syncTime)}`}>
-                                    {syncing
-                                      ? "Syncing..."
-                                      : `Synced ${formatTimeAgo(syncTime)}`}
+                                  <span title={`Updated ${repo.updated_at}`}>
+                                    Updated {formatTimeAgo(repo.updated_at)}
                                   </span>
                                   <span>{repo.private ? "Private" : "Public"}</span>
                                   {repo.language && <span>{repo.language}</span>}
@@ -523,7 +520,9 @@ export default function VSCodeSidebar({
               <div key={repo.id} className="p-1 px-2 bg-[#2d2d2d] rounded flex items-center justify-between">
                 <span className="text-gray-300 break-all font-semibold" title={repo.full_name}>{repo.name}</span>
                 <span className="text-[10px] text-gray-500 shrink-0 select-none">
-                  {formatTimeAgo(syncTimestamps[repo.full_name])}
+                  {syncTimestamps[repo.full_name]
+                    ? formatTimeAgo(syncTimestamps[repo.full_name])
+                    : "Not synced"}
                 </span>
               </div>
             ))}
@@ -548,41 +547,94 @@ export default function VSCodeSidebar({
         </div>
       )}
 
-      {/* PopUp Custom Right-Click Context Menu for Projects Management */}
-      {contextMenu && (
-        <div
-          className="fixed bg-[#1c1c1c] border border-gray-700/80 rounded shadow-2xl py-1 z-[100] w-56 text-xs select-none"
-          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="px-3 py-1.5 border-b border-gray-800 text-[10px] font-mono text-gray-500 uppercase leading-none font-semibold">
-            Tag Repositories to Project
+      {/* PopUp Custom Right-Click Context Menu for Repository Actions */}
+      {contextMenu && (() => {
+        const menuRepo = repos.find((repo) => repo.full_name === contextMenu.repoFullName);
+        if (!menuRepo) {
+          throw new Error(`context menu repo missing: ${contextMenu.repoFullName}`);
+        }
+        const menuRepoProjects = projectTags.filter((tag) =>
+          tag.repos.includes(contextMenu.repoFullName),
+        );
+
+        return (
+          <div
+            className="fixed bg-[#1c1c1c] border border-gray-700/80 rounded shadow-2xl py-1 z-[100] w-64 text-xs select-none"
+            style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-2 border-b border-gray-800 font-mono">
+              <div className="break-all text-[11px] font-semibold text-gray-200">
+                {menuRepo.full_name}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-500">
+                <span>Updated {formatTimeAgo(menuRepo.updated_at)}</span>
+                <span>{menuRepo.private ? "Private" : "Public"}</span>
+                {menuRepo.language && <span>{menuRepo.language}</span>}
+              </div>
+              {menuRepoProjects.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {menuRepoProjects.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() => {
+                        openProject(tag.id);
+                        setContextMenu(null);
+                      }}
+                      className="rounded border px-1.5 py-0.5 text-[9.5px] font-semibold"
+                      style={{
+                        backgroundColor: `${tag.color}1f`,
+                        borderColor: `${tag.color}66`,
+                        color: tag.color,
+                      }}
+                    >
+                      {tag.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                openRepo(contextMenu.repoFullName);
+                setContextMenu(null);
+              }}
+              className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer"
+            >
+              Open Repo Dashboard
+            </button>
+            <div className="px-3 py-1.5 border-y border-gray-800 text-[10px] font-mono text-gray-500 uppercase leading-none font-semibold">
+              Add to Project
+            </div>
+            {projectTags.length === 0 ? (
+              <div className="px-3 py-2 text-gray-500 italic">Create a project from the command palette.</div>
+            ) : (
+              projectTags.map((tag) => {
+                const isAdded = tag.repos.includes(contextMenu.repoFullName);
+                return (
+                  <button
+                    key={tag.id}
+                    type="button"
+                    onClick={() => {
+                      onAddProjectTag(tag.name, contextMenu.repoFullName);
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left px-3 py-1.5 text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors flex items-center justify-between cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                      <span className="break-words">{tag.name}</span>
+                    </div>
+                    {isAdded && <span className="text-[10px] text-emerald-400 font-bold shrink-0">Added</span>}
+                  </button>
+                );
+              })
+            )}
           </div>
-          {projectTags.length === 0 ? (
-            <div className="px-3 py-2 text-gray-500 italic">Create a project from the command palette.</div>
-          ) : (
-            projectTags.map((tag) => {
-              const isAdded = tag.repos.includes(contextMenu.repoFullName);
-              return (
-                <button
-                  key={tag.id}
-                  onClick={() => {
-                    onAddProjectTag(tag.name, contextMenu.repoFullName);
-                    setContextMenu(null);
-                  }}
-                  className="w-full text-left px-3 py-1.5 text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors flex items-center justify-between cursor-pointer"
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
-                    <span className="break-words">{tag.name}</span>
-                  </div>
-                  {isAdded && <span className="text-[10px] text-emerald-400 font-bold shrink-0">Added</span>}
-                </button>
-              );
-            })
-          )}
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
