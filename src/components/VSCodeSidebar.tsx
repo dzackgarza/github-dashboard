@@ -211,6 +211,9 @@ export default function VSCodeSidebar({
                       const isExpanded = !!expandedRepos[repo.full_name];
                       const syncTime = syncTimestamps[repo.full_name];
                       const syncing = !!isSyncing[repo.full_name];
+                      const repoProjects = projectTags.filter((tag) =>
+                        tag.repos.includes(repo.full_name),
+                      );
 
                       return (
                         <div key={repo.id} className="relative select-none">
@@ -220,12 +223,12 @@ export default function VSCodeSidebar({
                             onClick={() =>
                               handleToggleRepo(repo.owner.login, repo.name, repo.full_name)
                             }
-                            className={`flex items-center justify-between py-1.5 pr-2.5 pl-4 hover:bg-[#2a2d2e] cursor-pointer group ${
+                            className={`py-1.5 pr-2.5 pl-4 hover:bg-[#2a2d2e] cursor-pointer group ${
                               isExpanded ? "text-white" : "text-gray-400"
                             }`}
                             title="Right-click to attach tagging groups or check sync histories"
                           >
-                            <div className="flex items-center gap-2 min-w-0">
+                            <div className="flex min-w-0 items-start gap-2">
                               <span className="text-[#858585] shrink-0">
                                 {isExpanded ? (
                                   <FolderOpen size={14} className="text-[#007acc]" />
@@ -233,23 +236,42 @@ export default function VSCodeSidebar({
                                   <Folder size={14} className="text-gray-500" />
                                 )}
                               </span>
-                              <span className="font-mono break-all text-[12px] font-medium transition-colors hover:text-white" title={repo.full_name}>
-                                {repo.name}
-                              </span>
-                              {repo.private && (
-                                <span className="text-[9px] bg-red-950 text-red-400 border border-red-900 rounded px-1 scale-90">
-                                  Private
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0 opacity-40 group-hover:opacity-100 transition-opacity">
-                              <span
-                                className="text-[10px] font-mono text-gray-500"
-                                title={`Synced ${formatTimeAgo(syncTime)}`}
-                              >
-                                {syncing ? "Syncing..." : formatTimeAgo(syncTime)}
-                              </span>
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div
+                                  className="font-mono break-all text-[12px] font-medium transition-colors hover:text-white"
+                                  title={repo.full_name}
+                                >
+                                  {repo.full_name}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-gray-500">
+                                  <span title={`Synced ${formatTimeAgo(syncTime)}`}>
+                                    {syncing
+                                      ? "Syncing..."
+                                      : `Synced ${formatTimeAgo(syncTime)}`}
+                                  </span>
+                                  <span>{repo.private ? "Private" : "Public"}</span>
+                                  {repo.language && <span>{repo.language}</span>}
+                                  {repoProjects.map((tag) => (
+                                    <button
+                                      key={tag.id}
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openProject(tag.id);
+                                      }}
+                                      className="rounded border px-1.5 py-0.5 text-[9.5px] font-semibold"
+                                      style={{
+                                        backgroundColor: `${tag.color}1f`,
+                                        borderColor: `${tag.color}66`,
+                                        color: tag.color,
+                                      }}
+                                      title={`Open ${tag.name}`}
+                                    >
+                                      {tag.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
                             </div>
                           </div>
 
