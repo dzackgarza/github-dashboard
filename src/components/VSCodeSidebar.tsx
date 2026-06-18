@@ -18,6 +18,8 @@ import {
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
 
+const PROJECT_COLORS = ["#3b82f6", "#10b981", "#ef4444", "#a855f7", "#f59e0b", "#14b8a6", "#f43f5e", "#64748b"];
+
 interface VSCodeSidebarProps {
   activeView: "explorer" | "sync" | "settings";
   repos: Repo[];
@@ -27,6 +29,8 @@ interface VSCodeSidebarProps {
   onSelectIssue: (owner: string, repoName: string, issue: Issue) => void;
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
+  onCreateProjectTag: (name: string, color: string) => void;
+  onCreateProjectWithRepo: (name: string, color: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
@@ -47,6 +51,8 @@ export default function VSCodeSidebar({
   onSelectIssue,
   onSelectPR,
   onAddProjectTag,
+  onCreateProjectTag,
+  onCreateProjectWithRepo,
   onRemoveRepoFromTag,
   openRepo,
   openProject,
@@ -62,6 +68,8 @@ export default function VSCodeSidebar({
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [newProjectName, setNewProjectName] = useState("");
+  const [contextProjectName, setContextProjectName] = useState("");
 
   // Track expanded repositories
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
@@ -150,6 +158,32 @@ export default function VSCodeSidebar({
     return matchesSearch && matchesProject;
   });
 
+  const nextProjectColor = projectTags.length === 0
+    ? PROJECT_COLORS[0]
+    : PROJECT_COLORS[projectTags.length % PROJECT_COLORS.length];
+
+  const createProject = () => {
+    const name = newProjectName.trim();
+    if (!name) {
+      return;
+    }
+    onCreateProjectTag(name, nextProjectColor);
+    setNewProjectName("");
+  };
+
+  const createContextProject = () => {
+    if (!contextMenu) {
+      return;
+    }
+    const name = contextProjectName.trim();
+    if (!name) {
+      return;
+    }
+    onCreateProjectWithRepo(name, nextProjectColor, contextMenu.repoFullName);
+    setContextProjectName("");
+    setContextMenu(null);
+  };
+
   return (
     <div className="w-full h-full bg-[#252526] flex flex-col select-none text-[#cccccc] relative font-sans">
       {/* Sidebar Header */}
@@ -220,6 +254,7 @@ export default function VSCodeSidebar({
                         <div key={repo.id} className="relative select-none">
                           {/* Repo Folder Trigger */}
                           <div
+                            data-testid={`sidebar-repo-${repo.full_name}`}
                             onContextMenu={(e) => handleRightClickRepo(e, repo.full_name)}
                             onClick={() =>
                               handleToggleRepo(repo.owner.login, repo.name, repo.full_name)
@@ -442,8 +477,29 @@ export default function VSCodeSidebar({
 
               {projectsExpanded && (
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 custom-scrollbar">
+                  <div className="p-1.5 border border-[#3e3e3e]/70 bg-[#1e1e1f] rounded space-y-1.5">
+                    <input
+                      value={newProjectName}
+                      onChange={(event) => setNewProjectName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          createProject();
+                        }
+                      }}
+                      placeholder="New project name"
+                      className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
+                    />
+                    <button
+                      type="button"
+                      onClick={createProject}
+                      className="w-full px-2 py-1 text-[11px] font-mono text-left bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
+                    >
+                      Create Project
+                    </button>
+                  </div>
                   {projectTags.length === 0 ? (
-                    <div className="text-gray-500 italic px-6 py-2">Create a project from the command palette.</div>
+                    <div className="text-gray-500 italic px-6 py-2">No projects yet.</div>
                   ) : (
                     projectTags.map((tag) => {
                       const isProjectOpen = expandedProjects[tag.id] ?? true;
@@ -572,7 +628,13 @@ export default function VSCodeSidebar({
       )}
 
       {/* PopUp Custom Right-Click Context Menu for Repository Actions */}
-      {contextMenu && (
+      {contextMenu && (() => {
+        const menuRepo = repos.find((repo) => repo.full_name === contextMenu.repoFullName);
+        if (!menuRepo) {
+          throw new Error(`context menu repo missing: ${contextMenu.repoFullName}`);
+        }
+
+        return (
           <div
             className="fixed bg-[#1c1c1c] border border-gray-700/80 rounded shadow-2xl py-1 z-[100] w-56 text-xs select-none"
             style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
@@ -588,11 +650,44 @@ export default function VSCodeSidebar({
             >
               Open Repo Dashboard
             </button>
+            <a
+              data-testid="context-open-github"
+              href={menuRepo.html_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer"
+              onClick={() => setContextMenu(null)}
+            >
+              Open in GitHub
+            </a>
             <div className="px-3 py-1.5 border-y border-gray-800 text-[10px] font-mono text-gray-500 uppercase leading-none font-semibold">
               Add to Project
             </div>
+            <div className="p-2 space-y-1.5 border-b border-gray-800">
+              <input
+                data-testid="context-create-project-input"
+                value={contextProjectName}
+                onChange={(event) => setContextProjectName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    createContextProject();
+                  }
+                }}
+                placeholder="New project name"
+                className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
+              />
+              <button
+                data-testid="context-create-project-button"
+                type="button"
+                onClick={createContextProject}
+                className="w-full px-2 py-1 text-left text-[11px] font-mono bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
+              >
+                Create and Add
+              </button>
+            </div>
             {projectTags.length === 0 ? (
-              <div className="px-3 py-2 text-gray-500 italic">Create a project from the command palette.</div>
+              <div className="px-3 py-2 text-gray-500 italic">No existing projects.</div>
             ) : (
               projectTags.map((tag) => {
                 const isAdded = tag.repos.includes(contextMenu.repoFullName);
@@ -616,7 +711,8 @@ export default function VSCodeSidebar({
               })
             )}
           </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

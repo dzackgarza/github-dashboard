@@ -15,6 +15,7 @@ interface ProjectTag {
 
 interface Repo {
   full_name: string;
+  html_url: string;
 }
 
 interface ReposResponse {
@@ -133,6 +134,32 @@ test("opening a project dashboard does not apply the explorer project filter", a
     await expect(page.getByText("Explorer filter:")).toBeVisible();
     await expect(page.getByText("Unchanged")).toBeVisible();
     await expect(page.getByText("Project:")).toHaveCount(0);
+  } finally {
+    await request.post("/api/github/projects", {
+      data: { tags: originalTags }
+    });
+  }
+});
+
+test("repo right-click menu can create a project containing that repo", async ({ page, request }) => {
+  const originalTags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+  const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const projectName = `e2e-context-${Date.now()}`;
+  const projectRepo = reposResponse.repos[0].full_name;
+  const projectRepoUrl = reposResponse.repos[0].html_url;
+
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    await page.getByTestId(`sidebar-repo-${projectRepo}`).click({ button: "right" });
+    await expect(page.getByTestId("context-open-github")).toHaveAttribute("href", projectRepoUrl);
+    await page.getByTestId("context-create-project-input").fill(projectName);
+    await page.getByTestId("context-create-project-button").click();
+
+    await expect.poll(async () => {
+      const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+      return tags.find((tag) => tag.name === projectName)?.repos;
+    }).toEqual([projectRepo]);
   } finally {
     await request.post("/api/github/projects", {
       data: { tags: originalTags }

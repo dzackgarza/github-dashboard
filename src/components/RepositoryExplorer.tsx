@@ -24,6 +24,8 @@ import { Repo, Issue, PullRequest, ProjectTag } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
 import { useWorkspace } from "../context/WorkspaceContext";
 
+const PROJECT_COLORS = ["#3b82f6", "#10b981", "#ef4444", "#a855f7", "#f59e0b", "#14b8a6", "#f43f5e", "#64748b"];
+
 export default function RepositoryExplorer() {
   const {
     repos,
@@ -31,6 +33,7 @@ export default function RepositoryExplorer() {
     syncTimestamps,
     isSyncing,
     onAddProjectTag,
+    onCreateProjectWithRepo,
     onRemoveRepoFromTag,
     openTabs,
     activeRepoFullName,
@@ -70,6 +73,7 @@ export default function RepositoryExplorer() {
   const [dashIssues, setDashIssues] = useState<Issue[]>([]);
   const [dashPRs, setDashPRs] = useState<PullRequest[]>([]);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
+  const [newRepoProjectName, setNewRepoProjectName] = useState("");
 
   // Touch & Long-press tracking
   const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -270,6 +274,19 @@ export default function RepositoryExplorer() {
     return projectTags.filter((p) => !p.repos.includes(fullName));
   };
 
+  const createProjectForSelectedRepo = () => {
+    if (!selectedRepo) {
+      return;
+    }
+    const name = newRepoProjectName.trim();
+    if (!name) {
+      return;
+    }
+    const color = PROJECT_COLORS[projectTags.length % PROJECT_COLORS.length];
+    onCreateProjectWithRepo(name, color, selectedRepo.full_name);
+    setNewRepoProjectName("");
+  };
+
   return (
     <div className="w-full h-full bg-[#1e1e1e] flex flex-col min-h-0 relative select-none text-[#cccccc] font-sans">
       
@@ -405,9 +422,30 @@ export default function RepositoryExplorer() {
                   </select>
                 ) : (
                   <div className="text-[10px] text-gray-600 font-mono">
-                    {projectTags.length === 0 ? "Create a project from the command palette." : "Assigned to all projects."}
+                    {projectTags.length === 0 ? "No projects yet." : "Assigned to all projects."}
                   </div>
                 )}
+                <div className="space-y-1.5 pt-1">
+                  <input
+                    value={newRepoProjectName}
+                    onChange={(event) => setNewRepoProjectName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        createProjectForSelectedRepo();
+                      }
+                    }}
+                    placeholder="New project name"
+                    className="w-full bg-[#1a1a1c] border border-[#3e3e3e] text-gray-300 text-xs rounded px-2 py-1.5 outline-none focus:border-[#007acc]"
+                  />
+                  <button
+                    type="button"
+                    onClick={createProjectForSelectedRepo}
+                    className="w-full bg-[#094771] hover:bg-[#0e5f95] text-white text-xs rounded px-2 py-1.5 text-left font-mono"
+                  >
+                    Create Project With This Repo
+                  </button>
+                </div>
               </div>
             </div>
 

@@ -22,6 +22,7 @@ export interface Repo {
   name: string;
   full_name: string;
   description: string;
+  html_url: string;
   private: boolean;
   stargazers_count: number;
   language: string;

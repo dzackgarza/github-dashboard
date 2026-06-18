@@ -493,6 +493,18 @@ export default function App() {
     ]);
   };
 
+  const handleCreateProjectWithRepo = (name: string, color: string, repoFullName: string) => {
+    enqueueProjectMutation(`Create project ${name}`, (currentTags) => [
+      ...currentTags,
+      {
+        id: `proj-${Date.now()}`,
+        name,
+        color,
+        repos: [repoFullName]
+      }
+    ]);
+  };
+
   const handleDeleteProjectTag = (tagId: string) => {
     const tag = projectTagsRef.current.find((item) => item.id === tagId);
     if (!tag) {
@@ -594,6 +606,8 @@ export default function App() {
     openRepositoryExplorer: handleOpenRepositoryExplorer,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
+    onCreateProjectTag: handleCreateProjectTag,
+    onCreateProjectWithRepo: handleCreateProjectWithRepo,
     onRemoveRepoFromTag: handleRemoveRepoFromTag,
     openTabs: handleOpenTab,
   }), [
@@ -656,6 +670,8 @@ export default function App() {
               onSelectIssue={(owner, repo, data) => handleOpenTab(`issue-${owner}-${repo}-${data.number}`, "issue", `#${data.number}: ${data.title}`, owner, repo, data.number)}
               onSelectPR={(owner, repo, data) => handleOpenTab(`pr-${owner}-${repo}-${data.number}`, "pr", `PR #${data.number}: ${data.title}`, owner, repo, data.number)}
               onAddProjectTag={handleAddProjectTag}
+              onCreateProjectTag={handleCreateProjectTag}
+              onCreateProjectWithRepo={handleCreateProjectWithRepo}
               onRemoveRepoFromTag={handleRemoveRepoFromTag}
               openRepo={handleOpenRepo}
               openProject={handleOpenProject}

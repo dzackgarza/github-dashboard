@@ -20,6 +20,8 @@ export interface WorkspaceContextType {
   openRepositoryExplorer: () => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
+  onCreateProjectTag: (name: string, color: string) => void;
+  onCreateProjectWithRepo: (name: string, color: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
   openTabs: (id: string, type: Tab["type"], title: string, owner?: string, repo?: string, number?: number) => void;
 }
