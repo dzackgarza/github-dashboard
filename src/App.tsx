@@ -179,6 +179,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("all");
   const [activeRepoFullName, setActiveRepoFullName] = useState<string | null>(null);
+  const [activeProjectDashboardId, setActiveProjectDashboardId] = useState<string | null>(null);
 
   // Auth / verification states
   const [isTokenConfigured, setIsTokenConfigured] = useState(false);
@@ -348,12 +349,23 @@ export default function App() {
 
   const handleOpenRepo = (repoFullName: string) => {
     setActiveRepoFullName(repoFullName);
+    setActiveProjectDashboardId(null);
     handleOpenTab("explorer", "welcome", "Repositories");
   };
 
   const handleOpenProject = (projectId: string) => {
-    setSelectedProjectFilter(projectId);
+    const project = projectTagsRef.current.find((item) => item.id === projectId);
+    if (!project) {
+      throw new Error(`Project ${projectId} was not found.`);
+    }
+    setActiveProjectDashboardId(projectId);
     setActiveRepoFullName(null);
+    handleOpenTab("explorer", "welcome", "Repositories");
+  };
+
+  const handleOpenRepositoryExplorer = () => {
+    setActiveRepoFullName(null);
+    setActiveProjectDashboardId(null);
     handleOpenTab("explorer", "welcome", "Repositories");
   };
 
@@ -489,6 +501,9 @@ export default function App() {
     if (selectedProjectFilter === tagId) {
       setSelectedProjectFilter("all");
     }
+    if (activeProjectDashboardId === tagId) {
+      setActiveProjectDashboardId(null);
+    }
     enqueueProjectMutation(`Delete project ${tag.name}`, (currentTags) => currentTags.filter((item) => item.id !== tagId));
   };
 
@@ -572,9 +587,11 @@ export default function App() {
     isSyncingGlobal,
     selectedProjectFilter,
     activeRepoFullName,
+    activeProjectDashboardId,
     setSelectedProjectFilter,
     openRepo: handleOpenRepo,
     openProject: handleOpenProject,
+    openRepositoryExplorer: handleOpenRepositoryExplorer,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
     onRemoveRepoFromTag: handleRemoveRepoFromTag,
@@ -591,6 +608,7 @@ export default function App() {
     isSyncingGlobal,
     selectedProjectFilter,
     activeRepoFullName,
+    activeProjectDashboardId,
   ]);
 
   return (
@@ -645,6 +663,7 @@ export default function App() {
               activeTabId={activeTabId}
               onClose={() => setSidebarOpen(false)}
               selectedProjectFilter={selectedProjectFilter}
+              activeProjectDashboardId={activeProjectDashboardId}
               onSelectProjectFilter={setSelectedProjectFilter}
             />
           </div>

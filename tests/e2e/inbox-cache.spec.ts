@@ -13,6 +13,14 @@ interface ProjectTag {
   repos: string[];
 }
 
+interface Repo {
+  full_name: string;
+}
+
+interface ReposResponse {
+  repos: Repo[];
+}
+
 test("reopened Inbox renders cached items while live refresh is active", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" });
 
@@ -92,6 +100,39 @@ test("rapid repo project assignments settle to server-canonical project state", 
       const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
       return tags.find((tag) => tag.id === testProject.id)?.repos.length ?? 0;
     }).toBe(3);
+  } finally {
+    await request.post("/api/github/projects", {
+      data: { tags: originalTags }
+    });
+  }
+});
+
+test("opening a project dashboard does not apply the explorer project filter", async ({ page, request }) => {
+  const originalTags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+  const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const projectName = `e2e-dashboard-${Date.now()}`;
+  const projectRepo = reposResponse.repos[0].full_name;
+  const testProject: ProjectTag = {
+    id: `proj-dashboard-${Date.now()}`,
+    name: projectName,
+    color: "#10b981",
+    repos: [projectRepo]
+  };
+
+  await request.post("/api/github/projects", {
+    data: { tags: [...originalTags, testProject] }
+  });
+
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    await page.getByRole("button", { name: projectName }).first().click();
+
+    await expect(page.getByRole("heading", { name: projectName })).toBeVisible();
+    await expect(page.getByTestId("project-dashboard-repo").filter({ hasText: projectRepo })).toBeVisible();
+    await expect(page.getByText("Explorer filter:")).toBeVisible();
+    await expect(page.getByText("Unchanged")).toBeVisible();
+    await expect(page.getByText("Project:")).toHaveCount(0);
   } finally {
     await request.post("/api/github/projects", {
       data: { tags: originalTags }

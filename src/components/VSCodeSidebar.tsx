@@ -34,6 +34,7 @@ interface VSCodeSidebarProps {
   activeTabId: string;
   onClose?: () => void;
   selectedProjectFilter: string;
+  activeProjectDashboardId: string | null;
   onSelectProjectFilter: (filterId: string) => void;
 }
 
@@ -53,6 +54,7 @@ export default function VSCodeSidebar({
   activeTabId,
   onClose,
   selectedProjectFilter,
+  activeProjectDashboardId,
   onSelectProjectFilter
 }: VSCodeSidebarProps) {
   // Navigation / Collapsible section states
@@ -449,7 +451,7 @@ export default function VSCodeSidebar({
                         <div
                           onClick={() => openProject(tag.id)}
                           className={`flex items-center justify-between py-1 px-4 cursor-pointer rounded text-[11.5px] transition-all ${
-                            selectedProjectFilter === tag.id
+                            activeProjectDashboardId === tag.id
                               ? "bg-[#094771] text-white border-l-2 border-[#007acc] rounded-none"
                               : "hover:bg-[#2a2d2e] text-[#cccccc]"
                           }`}

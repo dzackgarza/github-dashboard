@@ -13,9 +13,11 @@ export interface WorkspaceContextType {
   isSyncingGlobal: boolean;
   selectedProjectFilter: string;
   activeRepoFullName: string | null;
+  activeProjectDashboardId: string | null;
   setSelectedProjectFilter: (filter: string) => void;
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
+  openRepositoryExplorer: () => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;

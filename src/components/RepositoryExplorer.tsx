@@ -34,14 +34,25 @@ export default function RepositoryExplorer() {
     onRemoveRepoFromTag,
     openTabs,
     activeRepoFullName,
+    activeProjectDashboardId,
     openRepo,
     openProject,
+    openRepositoryExplorer,
     selectedProjectFilter,
     setSelectedProjectFilter
   } = useWorkspace();
 
   const onSelectProjectFilter = setSelectedProjectFilter;
   const selectedRepo = repos.find((repo) => repo.full_name === activeRepoFullName) || null;
+  const activeProjectDashboard = activeProjectDashboardId
+    ? projectTags.find((project) => project.id === activeProjectDashboardId)
+    : null;
+  if (activeProjectDashboardId && !activeProjectDashboard) {
+    throw new Error(`Project ${activeProjectDashboardId} was not found.`);
+  }
+  const activeProjectRepos = activeProjectDashboard
+    ? repos.filter((repo) => activeProjectDashboard.repos.includes(repo.full_name))
+    : [];
 
   // Search, Sort, Filter
   const [searchQuery, setSearchQuery] = useState("");
@@ -278,9 +289,9 @@ export default function RepositoryExplorer() {
       {/* Tab Context Switch Header (Back navigation or standard banner) */}
       <div className="bg-[#252526] py-3.5 px-6 border-b border-[#3e3e3e] flex items-center justify-between shrink-0 select-none">
         <div className="flex items-center gap-2.5">
-          {selectedRepo ? (
+          {selectedRepo || activeProjectDashboard ? (
             <button
-              onClick={() => openProject("all")}
+              onClick={openRepositoryExplorer}
               className="p-1 px-2.5 bg-[#2d2d2d] hover:bg-[#333333] text-white border border-[#3e3e3e] rounded flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
             >
               <ChevronLeft size={14} />
@@ -630,6 +641,103 @@ export default function RepositoryExplorer() {
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : activeProjectDashboard ? (
+        <div data-testid="project-dashboard" className="flex-1 flex min-h-0 overflow-hidden bg-[#18181a]">
+          <div className="w-80 border-r border-[#3e3e3e] bg-[#222224] p-5 overflow-y-auto select-none">
+            <div className="space-y-5">
+              <div className="flex items-start gap-3">
+                <span
+                  className="mt-1 h-3 w-3 rounded-full border border-black/30 shrink-0"
+                  style={{ backgroundColor: activeProjectDashboard.color }}
+                />
+                <div className="min-w-0">
+                  <h3 className="font-bold text-white text-sm tracking-tight leading-snug break-words">
+                    {activeProjectDashboard.name}
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono">Project dashboard</p>
+                </div>
+              </div>
+
+              <div className="bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40 space-y-2.5 text-[11px] font-mono">
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Repositories:</span>
+                  <span className="text-gray-300">{activeProjectRepos.length}</span>
+                </div>
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Open issues:</span>
+                  <span className="text-gray-300">
+                    {activeProjectRepos.reduce((total, repo) => total + (repo.open_issues_count ?? 0), 0)}
+                  </span>
+                </div>
+                <div className="flex justify-between pt-0.5">
+                  <span className="text-gray-500">Explorer filter:</span>
+                  <span className="text-gray-400">Unchanged</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1f]">
+            <div className="h-10 bg-[#252526] border-b border-[#3e3e3e] px-4 flex items-center gap-2 shrink-0 select-none">
+              <Layers size={14} className="text-[#007acc]" />
+              <span className="text-xs font-mono font-bold text-white">Project Repositories</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+              {activeProjectRepos.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-gray-500">
+                  <FolderGit2 size={28} className="text-gray-600 mb-3" />
+                  <p className="text-xs font-mono">No repositories assigned to this project.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {activeProjectRepos.map((repo) => (
+                    <div
+                      key={repo.id}
+                      data-testid="project-dashboard-repo"
+                      onClick={() => openRepo(repo.full_name)}
+                      className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
+                    >
+                      <div className="min-w-0 space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-white tracking-tight break-all font-mono">
+                            {repo.full_name}
+                          </span>
+                          <span className="text-[9.5px] font-mono font-semibold text-gray-500 bg-gray-800/40 px-1.5 py-0.5 rounded leading-none border border-gray-800/30">
+                            {repo.private ? "Private" : "Public"}
+                          </span>
+                          {repo.language && (
+                            <span className="text-[10px] text-[#007acc] font-mono font-bold">
+                              {repo.language}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-400 leading-relaxed break-words">
+                          {repo.description || "No repository description."}
+                        </p>
+                        <div className="flex flex-wrap gap-3 text-[10px] text-gray-500 font-mono">
+                          <span>Updated {formatRelativeTime(repo.updated_at)}</span>
+                          <span>Issues: {repo.open_issues_count ?? 0}</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onRemoveRepoFromTag(activeProjectDashboard.id, repo.full_name);
+                        }}
+                        className="shrink-0 p-1.5 rounded border border-[#3e3e3e] text-gray-400 hover:text-white hover:border-gray-500"
+                        title={`Remove ${repo.full_name} from ${activeProjectDashboard.name}`}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
