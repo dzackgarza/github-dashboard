@@ -154,7 +154,7 @@ export default function PRDetailView({
               <ChevronRight size={10} className="text-gray-500" />
               <span>Pull Request #{pr.number}</span>
             </div>
-            <h2 className="text-lg font-bold text-white tracking-tight leading-snug truncate">
+            <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
               {pr.title}
             </h2>
           </div>
@@ -381,14 +381,14 @@ export default function PRDetailView({
                         <button
                           key={df.file}
                           onClick={() => setSelectedDiffFile(df)}
-                          className={`w-full text-left px-2 py-1.5 rounded text-[11px] font-mono leading-relaxed truncate cursor-pointer transition-colors flex items-center justify-between ${
+                          className={`w-full text-left px-2 py-1.5 rounded text-[11px] font-mono leading-relaxed cursor-pointer transition-colors flex items-start justify-between gap-2 ${
                             isSelected
                               ? "bg-[#37373d] text-white border-l-2 border-[#007acc]"
                               : "text-gray-400 hover:text-gray-200 hover:bg-[#28282b]"
                           }`}
                           title={df.file}
                         >
-                          <span className="truncate">{df.file.split("/").pop()}</span>
+                          <span className="break-all">{df.file.split("/").pop()}</span>
                           <span className="text-[9.5px] font-mono font-bold text-emerald-500 ml-1 shrink-0">
                             +{df.additions}
                           </span>
@@ -405,7 +405,7 @@ export default function PRDetailView({
                       <div className="px-4 py-2 bg-[#252526] border-b border-gray-900 flex items-center justify-between select-none text-xs shrink-0">
                         <div className="flex items-center gap-1.5 font-mono text-gray-300">
                           <FileCode size={13} className="text-[#007acc]" />
-                          <span className="font-semibold truncate max-w-sm">{selectedDiffFile.file}</span>
+                          <span className="font-semibold break-all">{selectedDiffFile.file}</span>
                         </div>
                         <div className="text-[10px] font-mono text-gray-500 shrink-0 select-none">
                           <span className="text-emerald-400">+{selectedDiffFile.additions} additions</span>
@@ -496,7 +496,7 @@ export default function PRDetailView({
                                 ) : (
                                   <XCircle size={12} className="text-red-400 shrink-0" />
                                 )}
-                                <span className="truncate text-gray-300 font-medium font-mono text-[11px]">{run.name}</span>
+                                <span className="break-words text-gray-300 font-medium font-mono text-[11px]">{run.name}</span>
                               </div>
                               <span className="text-[9.5px] font-mono text-gray-500 shrink-0">
                                 {isExpanded ? "Hide" : "Tail"}

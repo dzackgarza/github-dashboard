@@ -33,7 +33,7 @@ export default function VSCodeActivityBar({
           title="Explorer (Repos & Projects)"
         >
           <FolderGit2 size={22} />
-          <span className="absolute left-14 bg-gray-800 text-xs px-2 py-1 rounded text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap shadow-md">
+          <span className="absolute left-14 bg-gray-800 text-xs px-2 py-1 rounded text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none break-words shadow-md">
             Repositories
           </span>
         </button>

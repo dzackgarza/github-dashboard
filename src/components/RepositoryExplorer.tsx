@@ -394,6 +394,7 @@ export default function RepositoryExplorer() {
                 </div>
                 {getAvailableProjectsForRepo(selectedRepo.full_name).length > 0 ? (
                   <select
+                    data-testid="repo-dashboard-project-select"
                     value=""
                     onChange={(event) => {
                       const project = projectTags.find((tag) => tag.id === event.target.value);
@@ -484,13 +485,13 @@ export default function RepositoryExplorer() {
                                 }`}>
                                   {issue.state}
                                 </span>
-                                <span className="text-xs font-bold text-white tracking-tight truncate max-w-lg">
+                                <span className="text-xs font-bold text-white tracking-tight break-words">
                                   {issue.title}
                                 </span>
                                 <span className="text-[10px] text-gray-500 font-mono">#{issue.number}</span>
                               </div>
 
-                              <div className="text-[11px] text-gray-400 truncate max-w-2xl leading-normal">
+                              <div className="text-[11px] text-gray-400 break-words leading-normal">
                                 {issue.body ? issue.body.replace(/[#*`_-]/g, "").slice(0, 140) : "No description metadata requested."}...
                               </div>
 
@@ -549,13 +550,13 @@ export default function RepositoryExplorer() {
                                   <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded border font-bold uppercase leading-none ${stateColor}`}>
                                     {pr.state}
                                   </span>
-                                  <span className="text-xs font-bold text-white tracking-tight truncate max-w-lg">
+                                  <span className="text-xs font-bold text-white tracking-tight break-words">
                                     {pr.title}
                                   </span>
                                   <span className="text-[10px] text-gray-500 font-mono">#{pr.number}</span>
                                 </div>
 
-                                <div className="text-[11px] text-gray-400 truncate max-w-2xl leading-normal">
+                                <div className="text-[11px] text-gray-400 break-words leading-normal">
                                   {pr.body ? pr.body.replace(/[#*`_-]/g, "").slice(0, 145) : "*No PR descriptive scope provided.*"}...
                                 </div>
 
@@ -606,7 +607,7 @@ export default function RepositoryExplorer() {
                               <GitBranch size={13} />
                             </div>
                             <div className="min-w-0">
-                              <div className="font-bold text-xs text-white truncate font-mono">
+                              <div className="font-bold text-xs text-white break-all font-mono">
                                 {b.name}
                               </div>
                               <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
@@ -783,7 +784,7 @@ export default function RepositoryExplorer() {
                                 className="w-5.5 h-5.5 rounded bg-gray-800 border border-gray-700 shrink-0"
                                 referrerPolicy="no-referrer"
                               />
-                              <h3 className="font-bold text-xs text-white truncate max-w-[130px] font-mono leading-none tracking-tight">
+                              <h3 className="font-bold text-xs text-white break-all font-mono leading-none tracking-tight">
                                 {repo.name}
                               </h3>
                             </div>
@@ -795,7 +796,7 @@ export default function RepositoryExplorer() {
 
                           {/* Descriptive blurb */}
                           {repo.description ? (
-                            <p className="text-[11px] text-gray-400 leading-relaxed truncate-2-lines h-8.5 select-text">
+                            <p className="text-[11px] text-gray-400 leading-relaxed break-words select-text">
                               {repo.description}
                             </p>
                           ) : (
@@ -859,6 +860,7 @@ export default function RepositoryExplorer() {
                             </div>
                             {getAvailableProjectsForRepo(repo.full_name).length > 0 ? (
                               <select
+                                data-testid="repo-card-project-select"
                                 value=""
                                 onClick={(e) => e.stopPropagation()}
                                 onChange={(event) => {
@@ -922,7 +924,7 @@ export default function RepositoryExplorer() {
                     isMapped ? "text-emerald-400 font-bold" : "text-gray-400"
                   }`}
                 >
-                  <span className="truncate pr-1">{p.name}</span>
+                  <span className="break-words pr-1">{p.name}</span>
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
                 </button>
               );

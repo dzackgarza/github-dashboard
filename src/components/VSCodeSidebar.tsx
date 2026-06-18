@@ -233,7 +233,7 @@ export default function VSCodeSidebar({
                                   <Folder size={14} className="text-gray-500" />
                                 )}
                               </span>
-                              <span className="font-mono truncate text-[12px] font-medium transition-colors hover:text-white" title={repo.full_name}>
+                              <span className="font-mono break-all text-[12px] font-medium transition-colors hover:text-white" title={repo.full_name}>
                                 {repo.name}
                               </span>
                               {repo.private && (
@@ -309,7 +309,7 @@ export default function VSCodeSidebar({
                                                 ) : (
                                                   <CheckCircle2 size={12} className="text-purple-400 shrink-0" />
                                                 )}
-                                                <span className="truncate font-mono text-[11.5px]" title={issue.title}>
+                                                <span className="break-words font-mono text-[11.5px]" title={issue.title}>
                                                   <span className="text-gray-500 group-hover:text-gray-300 font-semibold mr-1.5">#{issue.number}</span>
                                                   {issue.title}
                                                 </span>
@@ -366,7 +366,7 @@ export default function VSCodeSidebar({
                                                 }`}
                                               >
                                                 <GitPullRequest size={12} className="text-emerald-500 shrink-0" />
-                                                <span className="truncate font-mono text-[11.5px]" title={pr.title}>
+                                                <span className="break-words font-mono text-[11.5px]" title={pr.title}>
                                                   <span className="text-gray-500 group-hover:text-gray-300 font-semibold mr-1.5">#{pr.number}</span>
                                                   {pr.title}
                                                 </span>
@@ -437,7 +437,7 @@ export default function VSCodeSidebar({
                         >
                           <div className="flex items-center gap-2 min-w-0">
                             <Tags size={12} style={{ color: tag.color }} className="shrink-0" />
-                            <span className="font-mono font-medium truncate">{tag.name}</span>
+                            <span className="font-mono font-medium break-words">{tag.name}</span>
                             <span className="text-[10px] text-gray-500 shrink-0">({tag.repos.length})</span>
                           </div>
                         </div>
@@ -458,7 +458,7 @@ export default function VSCodeSidebar({
                                         handleToggleRepo(rInfo.owner.login, rInfo.name, rInfo.full_name);
                                       }
                                     }}
-                                    className="font-mono text-[11px] hover:text-white truncate cursor-pointer"
+                                    className="font-mono text-[11px] hover:text-white break-all cursor-pointer"
                                     title={repoFullName}
                                   >
                                     {rInfo ? rInfo.name : repoFullName.split("/")[1] || repoFullName}
@@ -499,7 +499,7 @@ export default function VSCodeSidebar({
             <div className="text-gray-500 font-bold uppercase p-1">Repositories</div>
             {repos.map((repo) => (
               <div key={repo.id} className="p-1 px-2 bg-[#2d2d2d] rounded flex items-center justify-between">
-                <span className="text-gray-300 truncate font-semibold" title={repo.full_name}>{repo.name}</span>
+                <span className="text-gray-300 break-all font-semibold" title={repo.full_name}>{repo.name}</span>
                 <span className="text-[10px] text-gray-500 shrink-0 select-none">
                   {formatTimeAgo(syncTimestamps[repo.full_name])}
                 </span>
@@ -552,7 +552,7 @@ export default function VSCodeSidebar({
                 >
                   <div className="flex items-center gap-1.5 min-w-0">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
-                    <span className="truncate">{tag.name}</span>
+                    <span className="break-words">{tag.name}</span>
                   </div>
                   {isAdded && <span className="text-[10px] text-emerald-400 font-bold shrink-0">Added</span>}
                 </button>

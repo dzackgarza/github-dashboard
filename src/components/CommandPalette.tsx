@@ -378,9 +378,9 @@ export default function CommandPalette({
                       )}
                       
                       <div className="min-w-0">
-                        <div className="font-medium font-sans truncate">{opt.title}</div>
+                        <div className="font-medium font-sans break-words">{opt.title}</div>
                         {opt.subtitle && (
-                          <div className={`text-[10px] mt-0.5 truncate ${isActive ? "text-blue-100" : "text-gray-400"}`}>
+                          <div className={`text-[10px] mt-0.5 break-words ${isActive ? "text-blue-100" : "text-gray-400"}`}>
                             {opt.subtitle}
                           </div>
                         )}

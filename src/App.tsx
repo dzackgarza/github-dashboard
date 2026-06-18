@@ -11,6 +11,21 @@ import { WorkspaceContext } from "./context/WorkspaceContext";
 import { Repo, ProjectTag, SyncLog, RateLimit, Tab, Issue, PullRequest } from "./types";
 import { DockviewReact, DockviewReadyEvent, IDockviewPanelProps, DockviewApi } from "dockview";
 
+type ProjectMutationStatus = "queued" | "saving" | "saved" | "error";
+
+interface ProjectMutationNotification {
+  id: string;
+  label: string;
+  status: ProjectMutationStatus;
+  detail: string;
+}
+
+interface QueuedProjectMutation {
+  id: string;
+  label: string;
+  computeNextTags: (currentTags: ProjectTag[]) => ProjectTag[];
+}
+
 function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: any }>) {
   const [issue, setIssue] = useState<any>(params.data);
   const [loading, setLoading] = useState(!params.data);
@@ -155,6 +170,11 @@ export default function App() {
   // GitHub items list states
   const [repos, setRepos] = useState<Repo[]>([]);
   const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
+  const projectTagsRef = useRef<ProjectTag[]>([]);
+  const projectMutationQueueRef = useRef<QueuedProjectMutation[]>([]);
+  const projectMutationFlushActiveRef = useRef(false);
+  const projectMutationFlushTimerRef = useRef<number | null>(null);
+  const [projectMutationNotifications, setProjectMutationNotifications] = useState<ProjectMutationNotification[]>([]);
   const [syncTimestamps, setSyncTimestamps] = useState<Record<string, string>>({});
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("all");
@@ -195,6 +215,10 @@ export default function App() {
   useEffect(() => {
     bootstrapWorkspace();
   }, []);
+
+  useEffect(() => {
+    projectTagsRef.current = projectTags;
+  }, [projectTags]);
 
   const bootstrapWorkspace = async () => {
     try {
@@ -333,108 +357,139 @@ export default function App() {
     handleOpenTab("explorer", "welcome", "Repositories");
   };
 
-  // Metadata project tag assigning
-  const handleAddProjectTag = async (tagName: string, repoFullName: string) => {
-    const updatedTags = projectTags.map((tag) => {
-      if (tag.name === tagName) {
-        const alreadyHas = tag.repos.includes(repoFullName);
-        return {
-          ...tag,
-          repos: alreadyHas ? tag.repos : [...tag.repos, repoFullName]
-        };
-      }
-      return tag;
-    });
+  const updateProjectNotification = (id: string, patch: Partial<ProjectMutationNotification>) => {
+    setProjectMutationNotifications((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  };
+
+  const removeProjectNotification = (id: string) => {
+    setProjectMutationNotifications((current) => current.filter((item) => item.id !== id));
+  };
+
+  const flushProjectMutations = async () => {
+    if (projectMutationFlushActiveRef.current || projectMutationQueueRef.current.length === 0) {
+      return;
+    }
+
+    projectMutationFlushActiveRef.current = true;
+    const batch = projectMutationQueueRef.current.splice(0);
+    batch.forEach((mutation) => updateProjectNotification(mutation.id, { status: "saving", detail: "Saving" }));
 
     try {
+      const updatedTags = batch.reduce(
+        (currentTags, mutation) => mutation.computeNextTags(currentTags),
+        projectTagsRef.current
+      );
       const res = await fetch("/api/github/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags: updatedTags })
       });
-      if (res.ok) {
-        const data = await res.json();
-        setProjectTags(data.projectTags);
-        await refreshSyncDiagnostics();
+      if (!res.ok) {
+        throw new Error(`Project update failed with HTTP ${res.status}`);
       }
-    } catch (e) {
-      console.error("Metadata tag setting error", e);
+      const data = await res.json();
+      const canonicalTags = data.projectTags as ProjectTag[];
+      projectTagsRef.current = canonicalTags;
+      setProjectTags(canonicalTags);
+      void refreshSyncDiagnostics();
+      batch.forEach((mutation) => {
+        updateProjectNotification(mutation.id, { status: "saved", detail: "Saved" });
+        window.setTimeout(() => removeProjectNotification(mutation.id), 1800);
+      });
+    } catch (error) {
+      batch.forEach((mutation) => {
+        updateProjectNotification(mutation.id, {
+          status: "error",
+          detail: error instanceof Error ? error.message : "Project update failed"
+        });
+      });
+    } finally {
+      projectMutationFlushActiveRef.current = false;
+      if (projectMutationQueueRef.current.length > 0) {
+        scheduleProjectMutationFlush();
+      }
     }
   };
 
-  const handleRemoveRepoFromTag = async (tagId: string, repoFullName: string) => {
-    const updatedTags = projectTags.map((tag) => {
-      if (tag.id === tagId) {
-        return {
-          ...tag,
-          repos: tag.repos.filter((r) => r !== repoFullName)
-        };
-      }
-      return tag;
-    });
-
-    try {
-      const res = await fetch("/api/github/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProjectTags(data.projectTags);
-        await refreshSyncDiagnostics();
-      }
-    } catch (e) {
-      console.error("Removing repo tag mapping fail", e);
+  const scheduleProjectMutationFlush = () => {
+    if (projectMutationFlushTimerRef.current !== null || projectMutationFlushActiveRef.current) {
+      return;
     }
+    projectMutationFlushTimerRef.current = window.setTimeout(() => {
+      projectMutationFlushTimerRef.current = null;
+      void flushProjectMutations();
+    }, 100);
+  };
+
+  const enqueueProjectMutation = (
+    label: string,
+    computeNextTags: (currentTags: ProjectTag[]) => ProjectTag[]
+  ) => {
+    const id = crypto.randomUUID();
+    projectMutationQueueRef.current.push({ id, label, computeNextTags });
+    setProjectMutationNotifications((current) => [
+      ...current,
+      { id, label, status: "queued", detail: "Queued" }
+    ]);
+    scheduleProjectMutationFlush();
+  };
+
+  // Metadata project tag assigning
+  const handleAddProjectTag = (tagName: string, repoFullName: string) => {
+    enqueueProjectMutation(`Add ${repoFullName} to ${tagName}`, (currentTags) =>
+      currentTags.map((tag) => {
+        if (tag.name === tagName) {
+          const alreadyHas = tag.repos.includes(repoFullName);
+          return {
+            ...tag,
+            repos: alreadyHas ? tag.repos : [...tag.repos, repoFullName]
+          };
+        }
+        return tag;
+      })
+    );
+  };
+
+  const handleRemoveRepoFromTag = (tagId: string, repoFullName: string) => {
+    const tag = projectTagsRef.current.find((item) => item.id === tagId);
+    if (!tag) {
+      throw new Error(`Project ${tagId} was not found.`);
+    }
+    enqueueProjectMutation(`Remove ${repoFullName} from ${tag.name}`, (currentTags) =>
+      currentTags.map((tag) => {
+        if (tag.id === tagId) {
+          return {
+            ...tag,
+            repos: tag.repos.filter((r) => r !== repoFullName)
+          };
+        }
+        return tag;
+      })
+    );
   };
 
   // Project creation and deletion are command-palette actions.
-  const handleCreateProjectTag = async (name: string, color: string) => {
-    const newTag: ProjectTag = {
-      id: `proj-${Date.now()}`,
-      name,
-      color,
-      repos: []
-    };
-    const updatedTags = [...projectTags, newTag];
-
-    try {
-      const res = await fetch("/api/github/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProjectTags(data.projectTags);
-        await refreshSyncDiagnostics();
+  const handleCreateProjectTag = (name: string, color: string) => {
+    enqueueProjectMutation(`Create project ${name}`, (currentTags) => [
+      ...currentTags,
+      {
+        id: `proj-${Date.now()}`,
+        name,
+        color,
+        repos: []
       }
-    } catch (err) {
-      console.error("Failed creating tag folder category", err);
-    }
+    ]);
   };
 
-  const handleDeleteProjectTag = async (tagId: string) => {
+  const handleDeleteProjectTag = (tagId: string) => {
+    const tag = projectTagsRef.current.find((item) => item.id === tagId);
+    if (!tag) {
+      throw new Error(`Project ${tagId} was not found.`);
+    }
     if (selectedProjectFilter === tagId) {
       setSelectedProjectFilter("all");
     }
-    const updatedTags = projectTags.filter((t) => t.id !== tagId);
-
-    try {
-      const res = await fetch("/api/github/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setProjectTags(data.projectTags);
-        await refreshSyncDiagnostics();
-      }
-    } catch (err) {
-      console.error("Failed destroying tag tag structure", err);
-    }
+    enqueueProjectMutation(`Delete project ${tag.name}`, (currentTags) => currentTags.filter((item) => item.id !== tagId));
   };
 
   // Update tabs callback to trigger reloading active items when comment adds
@@ -541,6 +596,25 @@ export default function App() {
   return (
     <WorkspaceContext.Provider value={contextValue}>
       <div className="w-screen h-screen flex flex-col bg-[#1e1e1e] overflow-hidden text-[#cccccc] font-sans">
+      {projectMutationNotifications.length > 0 && (
+        <div className="fixed right-4 bottom-4 z-[200] w-[360px] max-w-[calc(100vw-2rem)] space-y-2">
+          {projectMutationNotifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`border rounded bg-[#252526] shadow-xl px-3 py-2 text-xs ${
+                notification.status === "error"
+                  ? "border-red-800 text-red-200"
+                  : notification.status === "saved"
+                  ? "border-emerald-800 text-emerald-200"
+                  : "border-[#3e3e3e] text-gray-200"
+              }`}
+            >
+              <div className="font-semibold leading-snug break-words">{notification.label}</div>
+              <div className="mt-1 text-[11px] text-gray-400 break-words">{notification.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
       
       {/* 1. Main Workspace Body row */}
       <div className="flex-1 flex min-h-0 overflow-hidden">

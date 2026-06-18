@@ -267,7 +267,7 @@ export default function WelcomeDashboard() {
             </div>
           )}
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-white flex items-center gap-2 truncate">
+            <h1 className="text-lg font-bold text-white flex items-center gap-2 break-words">
               <span>{githubUser?.name || githubUser?.login || "Guest Developer Workspace"}</span>
             </h1>
             <p className="text-xs text-gray-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -599,7 +599,7 @@ export default function WelcomeDashboard() {
                             className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/20"
                             style={{ backgroundColor: tag.color || "#0db981" }}
                           />
-                          <span className="text-xs font-semibold text-gray-200 truncate">{tag.name}</span>
+                          <span className="text-xs font-semibold text-gray-200 break-words">{tag.name}</span>
                         </div>
                         <div className="text-[10px] text-gray-500 mt-1 font-mono">
                           Mapped: {tag.repos.length} {tag.repos.length === 1 ? "repository" : "repositories"}

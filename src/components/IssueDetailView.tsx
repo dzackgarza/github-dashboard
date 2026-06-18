@@ -93,7 +93,7 @@ export default function IssueDetailView({
                 <ChevronRight size={10} className="text-gray-500" />
                 <span>Issue #{issue.number}</span>
               </div>
-              <h2 className="text-lg font-bold text-white tracking-tight leading-snug truncate">
+              <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
                 {issue.title}
               </h2>
             </div>
@@ -180,7 +180,7 @@ export default function IssueDetailView({
               {issue.labels.map((l) => (
                 <span
                   key={l.name}
-                  className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold max-w-xs truncate"
+                  className="text-[10.5px] px-2 py-0.5 rounded-full font-semibold break-words"
                   style={{
                     backgroundColor: `#${l.color}1e`,
                     color: `#${l.color}`,
