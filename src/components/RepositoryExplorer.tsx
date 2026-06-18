@@ -1,0 +1,979 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Search,
+  FolderGit2,
+  GitPullRequest,
+  AlertCircle,
+  Clock,
+  Star,
+  Trash2,
+  FolderPlus,
+  Plus,
+  ChevronRight,
+  ArrowUpDown,
+  CircleDot,
+  Fingerprint,
+  RefreshCw,
+  GitBranch,
+  X,
+  ExternalLink,
+  ChevronDown,
+  Lock,
+  Unlock,
+  ChevronLeft,
+  Calendar,
+  Layers,
+  Inbox,
+  Workflow,
+  Compass
+} from "lucide-react";
+import { Repo, Issue, PullRequest, ProjectTag } from "../types";
+import MarkdownViewer from "./MarkdownViewer";
+import { useWorkspace } from "../context/WorkspaceContext";
+
+export default function RepositoryExplorer() {
+  const {
+    repos,
+    projectTags,
+    syncTimestamps,
+    isSyncing,
+    onForceSync,
+    onAddProjectTag,
+    onRemoveRepoFromTag,
+    onCreateProjectTag,
+    onDeleteProjectTag,
+    openTabs,
+    selectedProjectFilter,
+    setSelectedProjectFilter
+  } = useWorkspace();
+
+  const onSelectProjectFilter = setSelectedProjectFilter;
+  // Navigation
+  const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null);
+
+  // Search, Sort, Filter
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedLanguageFilter, setSelectedLanguageFilter] = useState<string>("all");
+  const [sortBy, setSortBy] = useState<"name" | "stars" | "issues" | "updated" | "created">("updated");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+
+  // Drag and drop visual cues
+  const [draggedRepo, setDraggedRepo] = useState<string | null>(null);
+  const [activeDragOverProjId, setActiveDragOverProjId] = useState<string | null>(null);
+  const [isDragOverTrash, setIsDragOverTrash] = useState(false);
+
+  // Project management inputs
+  const [newProjName, setNewProjName] = useState("");
+  const [newProjColor, setNewProjColor] = useState("#3b82f6");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // Dashboard Tab selection inside repo dashboard
+  const [dashTab, setDashTab] = useState<"issues" | "prs" | "branches">("issues");
+  const [branches, setBranches] = useState<{ name: string; commit: { sha: string; date: string } }[]>([]);
+  const [dashIssues, setDashIssues] = useState<Issue[]>([]);
+  const [dashPRs, setDashPRs] = useState<PullRequest[]>([]);
+  const [loadingDashboard, setLoadingDashboard] = useState(false);
+
+  // Touch & Long-press tracking
+  const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [touchMenuRepo, setTouchMenuRepo] = useState<Repo | null>(null);
+  const [touchMenuPos, setTouchMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  const colors = [
+    { value: "#3b82f6", name: "Blue" },
+    { value: "#10b981", name: "Green" },
+    { value: "#ef4444", name: "Red" },
+    { value: "#a855f7", name: "Purple" },
+    { value: "#f59e0b", name: "Amber" },
+    { value: "#14b8a6", name: "Teal" },
+    { value: "#f43f5e", name: "Rose" },
+    { value: "#64748b", name: "Slate" }
+  ];
+
+  // Load Dashboard Data once a Repo is selected
+  useEffect(() => {
+    if (selectedRepo) {
+      setLoadingDashboard(true);
+      setDashTab("issues");
+      const { owner, name } = selectedRepo;
+      const fullName = selectedRepo.full_name;
+
+      Promise.all([
+        fetch(`/api/github/repos/${owner.login}/${name}/issues`).then((r) => r.json()),
+        fetch(`/api/github/repos/${owner.login}/${name}/prs`).then((r) => r.json()),
+        fetch(`/api/github/repos/${owner.login}/${name}/branches`).then((r) => r.json())
+      ])
+        .then(([issues, prs, brs]) => {
+          setDashIssues(issues || []);
+          setDashPRs(prs || []);
+          setBranches(brs || []);
+        })
+        .catch((err) => console.error("Error loading dashboard repo metadata", err))
+        .finally(() => setLoadingDashboard(false));
+    }
+  }, [selectedRepo]);
+
+  // Fuzzy Subsequence Character Match algorithm
+  const fuzzyMatch = (text: string, query: string) => {
+    if (!query) return true;
+    const cleanText = text.toLowerCase();
+    const cleanQuery = query.toLowerCase();
+    
+    // Quick substring check
+    if (cleanText.includes(cleanQuery)) return true;
+
+    // Subroutine character check
+    let queryIdx = 0;
+    for (let textIdx = 0; textIdx < cleanText.length; textIdx++) {
+      if (cleanText[textIdx] === cleanQuery[queryIdx]) {
+        queryIdx++;
+        if (queryIdx === cleanQuery.length) return true;
+      }
+    }
+    return false;
+  };
+
+  // Get unique languages list
+  const languagesList = Array.from(new Set(repos.map((r) => r.language || "Markdown")));
+
+  // Filter repos
+  const filteredRepos = repos.filter((repo) => {
+    // 1. Fuzzy query filter
+    const matchesQuery =
+      fuzzyMatch(repo.full_name, searchQuery) ||
+      fuzzyMatch(repo.description || "", searchQuery) ||
+      fuzzyMatch(repo.language || "", searchQuery);
+
+    // 2. Language filter
+    const matchesLanguage =
+      selectedLanguageFilter === "all" ||
+      (repo.language || "Markdown") === selectedLanguageFilter;
+
+    // 3. Project Filter
+    let matchesProject = true;
+    if (selectedProjectFilter !== "all") {
+      const proj = projectTags.find((t) => t.id === selectedProjectFilter);
+      matchesProject = proj ? proj.repos.includes(repo.full_name) : false;
+    }
+
+    return matchesQuery && matchesLanguage && matchesProject;
+  });
+
+  // Sort repos
+  const sortedRepos = [...filteredRepos].sort((a, b) => {
+    let valueA: any = a.full_name;
+    let valueB: any = b.full_name;
+
+    if (sortBy === "stars") {
+      valueA = a.stargazers_count;
+      valueB = b.stargazers_count;
+    } else if (sortBy === "issues") {
+      valueA = a.open_issues_count ?? 0;
+      valueB = b.open_issues_count ?? 0;
+    } else if (sortBy === "updated") {
+      valueA = new Date(syncTimestamps[a.full_name] || a.updated_at).getTime();
+      valueB = new Date(syncTimestamps[b.full_name] || b.updated_at).getTime();
+    } else if (sortBy === "created") {
+      valueA = new Date(a.updated_at || "").getTime();
+      valueB = new Date(b.updated_at || "").getTime();
+    }
+
+    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
+    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  // HTML5 Core Drag & Drop handlers
+  const handleDragStart = (e: React.DragEvent, fullName: string) => {
+    setDraggedRepo(fullName);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", fullName);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedRepo(null);
+    setActiveDragOverProjId(null);
+    setIsDragOverTrash(false);
+  };
+
+  const handleProjDragOver = (e: React.DragEvent, projId: string) => {
+    e.preventDefault();
+    setActiveDragOverProjId(projId);
+  };
+
+  const handleProjDrop = (e: React.DragEvent, projId: string) => {
+    e.preventDefault();
+    const repoName = e.dataTransfer.getData("text/plain") || draggedRepo;
+    if (repoName) {
+      const proj = projectTags.find((p) => p.id === projId);
+      if (proj && !proj.repos.includes(repoName)) {
+        onAddProjectTag(proj.name, repoName);
+      }
+    }
+    setActiveDragOverProjId(null);
+    setDraggedRepo(null);
+  };
+
+  const handleTrashDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOverTrash(true);
+  };
+
+  const handleTrashDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const repoName = e.dataTransfer.getData("text/plain") || draggedRepo;
+    if (repoName) {
+      // Find what project contains this repo to unbind it
+      projectTags.forEach((p) => {
+        if (p.repos.includes(repoName)) {
+          onRemoveRepoFromTag(p.id, repoName);
+        }
+      });
+    }
+    setIsDragOverTrash(false);
+    setDraggedRepo(null);
+  };
+
+  // Touch Touchscreen-friendly right-click (Long press handlers)
+  const handleTouchStart = (e: React.TouchEvent, repo: Repo) => {
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    
+    // Track pointer position
+    const touch = e.touches[0];
+    const clientX = touch.clientX;
+    const clientY = touch.clientY;
+
+    pressTimerRef.current = setTimeout(() => {
+      setTouchMenuRepo(repo);
+      setTouchMenuPos({ x: clientX, y: clientY });
+    }, 600); // 600ms hold to open touch control selector
+  };
+
+  const handleTouchEnd = () => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  };
+
+  // Create Project Helper
+  const handleCreateProjSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newProjName.trim()) {
+      onCreateProjectTag(newProjName.trim(), newProjColor);
+      setNewProjName("");
+      setShowCreateForm(false);
+    }
+  };
+
+  const formatDate = (isoString?: string) => {
+    if (!isoString) return "N/A";
+    return new Date(isoString).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric"
+    });
+  };
+
+  const formatRelativeTime = (isoString?: string) => {
+    if (!isoString) return "Never updated";
+    const diff = Date.now() - new Date(isoString).getTime();
+    const sec = Math.floor(diff / 1000);
+    const min = Math.floor(sec / 60);
+    const hrs = Math.floor(min / 60);
+    const days = Math.floor(hrs / 24);
+
+    if (sec < 60) return "Just now";
+    if (min < 60) return `${min}m ago`;
+    if (hrs < 24) return `${hrs}h ${min % 60}m ago`;
+    return `${days} days ago`;
+  };
+
+  // Check which Projects a repository belongs to
+  const getMappedProjectsForRepo = (fullName: string) => {
+    return projectTags.filter((p) => p.repos.includes(fullName));
+  };
+
+  return (
+    <div className="w-full h-full bg-[#1e1e1e] flex flex-col min-h-0 relative select-none text-[#cccccc] font-sans">
+      
+      {/* Tab Context Switch Header (Back navigation or standard banner) */}
+      <div className="bg-[#252526] py-3.5 px-6 border-b border-[#3e3e3e] flex items-center justify-between shrink-0 select-none">
+        <div className="flex items-center gap-2.5">
+          {selectedRepo ? (
+            <button
+              onClick={() => setSelectedRepo(null)}
+              className="p-1 px-2.5 bg-[#2d2d2d] hover:bg-[#333333] text-white border border-[#3e3e3e] rounded flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
+            >
+              <ChevronLeft size={14} />
+              <span>Back to Library Explorer</span>
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <FolderGit2 className="text-[#007acc]" size={18} />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+                Project & Repository Console
+              </h2>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex items-center gap-2">
+          {/* Cleansed header with no redundant buttons */}
+        </div>
+      </div>
+
+      {/* RENDER VIEW 1: RECOVERY REPOSITION DASHBOARD FOR SINGLE CHOSEN PROJECT REPO */}
+      {selectedRepo ? (
+        <div className="flex-1 flex min-h-0 overflow-hidden bg-[#18181a]">
+          {/* Dashboard Left Side Metadata Frame */}
+          <div className="w-80 border-r border-[#3e3e3e] bg-[#222224] p-5 flex flex-col justify-between overflow-y-auto select-none">
+            <div className="space-y-6">
+              {/* Repo core logo banner */}
+              <div className="flex items-start gap-3">
+                <img
+                  src={selectedRepo.owner.avatar_url}
+                  alt={selectedRepo.owner.login}
+                  className="w-12 h-12 rounded border border-[#3e3e3e] shadow-md shrink-0"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="min-w-0">
+                  <h3 className="font-bold text-white text-sm tracking-tight leading-snug break-all">
+                    {selectedRepo.name}
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono">@{selectedRepo.owner.login}</p>
+                </div>
+              </div>
+
+              {/* Brief stats overview list */}
+              <div className="bg-[#1a1a1c] p-3 rounded.5 border border-[#3e3e3e]/40 space-y-2.5 text-[11px] font-mono">
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Kind:</span>
+                  <span className="text-gray-300 flex items-center gap-1">
+                    {selectedRepo.private ? <Lock size={10} className="text-amber-500" /> : <Unlock size={10} className="text-emerald-500" />}
+                    {selectedRepo.private ? "Private Node" : "Public Node"}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Stargazers:</span>
+                  <span className="text-amber-400 flex items-center gap-1">
+                    <Star size={10} className="fill-amber-500" />
+                    {selectedRepo.stargazers_count}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Core Language:</span>
+                  <span className="text-[#007acc] font-bold">{selectedRepo.language || "Markdown"}</span>
+                </div>
+                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+                  <span className="text-gray-500">Created:</span>
+                  <span className="text-gray-400">{formatDate(selectedRepo.updated_at)}</span>
+                </div>
+                <div className="flex justify-between pt-0.5">
+                  <span className="text-gray-500">Sync Cycle:</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    {isSyncing[selectedRepo.full_name] ? (
+                      <RefreshCw size={9} className="animate-spin" />
+                    ) : (
+                      "Polled"
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              {/* Description box */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold">Workspace Project Scope</span>
+                <p className="text-xs text-gray-400 leading-normal bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40">
+                  {selectedRepo.description || "No project description metadata registered in repository."}
+                </p>
+              </div>
+
+              {/* Mapped projects tags */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold block">Assigned Projects</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {getMappedProjectsForRepo(selectedRepo.full_name).length === 0 ? (
+                    <span className="text-xs italic text-gray-500 font-mono">Not placed in any Project</span>
+                  ) : (
+                    getMappedProjectsForRepo(selectedRepo.full_name).map((p) => (
+                      <span
+                        key={p.id}
+                        className="px-2.5 py-1 rounded text-[11px] font-mono font-semibold"
+                        style={{ backgroundColor: `${p.color}25`, border: `1px solid ${p.color}50`, color: p.color }}
+                      >
+                        {p.name}
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Quick sync controls */}
+            <div className="pt-4 border-t border-[#3e3e3e]">
+              <button
+                onClick={() => onForceSync(selectedRepo.owner.login, selectedRepo.name)}
+                disabled={isSyncing[selectedRepo.full_name]}
+                className="w-full py-2 bg-[#007acc] hover:bg-[#0062a3] disabled:bg-gray-800 text-white font-semibold rounded text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw size={12} className={isSyncing[selectedRepo.full_name] ? "animate-spin" : ""} />
+                <span>{isSyncing[selectedRepo.full_name] ? "Polling updates..." : "Force ETag Poll Sync"}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Detailed Lists tabs content right pane */}
+          <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1f]">
+            {/* Inner top Tab navigation selection bar */}
+            <div className="h-10 bg-[#252526] border-b border-[#3e3e3e] px-4 flex items-center gap-1.5 shrink-0 select-none">
+              <button
+                onClick={() => setDashTab("issues")}
+                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
+                  dashTab === "issues" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <AlertCircle size={13} className="text-emerald-500" />
+                <span>Issues & Tickets ({dashIssues.length})</span>
+              </button>
+
+              <button
+                onClick={() => setDashTab("prs")}
+                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
+                  dashTab === "prs" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <GitPullRequest size={13} className="text-purple-400" />
+                <span>Pull Request Branches ({dashPRs.length})</span>
+              </button>
+
+              <button
+                onClick={() => setDashTab("branches")}
+                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
+                  dashTab === "branches" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <GitBranch size={13} className="text-blue-400" />
+                <span>Active Branches ({branches.length})</span>
+              </button>
+            </div>
+
+            {/* List Body items container */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 select-text custom-scrollbar">
+              {loadingDashboard ? (
+                <div className="h-64 flex flex-col items-center justify-center text-gray-500 gap-2.5">
+                  <RefreshCw className="animate-spin text-[#007acc]" size={24} />
+                  <span className="text-xs font-mono">Extracting repository specifications from conditional sync...</span>
+                </div>
+              ) : (
+                <>
+                  {/* TAB 1: ISSUES LIST */}
+                  {dashTab === "issues" && (
+                    <div className="space-y-3">
+                      {dashIssues.length === 0 ? (
+                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+                          <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
+                          <p className="text-xs font-mono">No open development tickets registered.</p>
+                        </div>
+                      ) : (
+                        dashIssues.map((issue) => (
+                          <div
+                            key={issue.number}
+                            onClick={() => openTabs(`issue-${selectedRepo.full_name}-${issue.number}`, "issue", `Issue #${issue.number}`, selectedRepo.owner.login, selectedRepo.name, issue.number)}
+                            className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
+                          >
+                            <div className="space-y-1.5 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded font-bold uppercase leading-none ${
+                                  issue.state === "open" ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900" : "bg-gray-800 text-gray-400"
+                                }`}>
+                                  {issue.state}
+                                </span>
+                                <span className="text-xs font-bold text-white tracking-tight truncate max-w-lg">
+                                  {issue.title}
+                                </span>
+                                <span className="text-[10px] text-gray-500 font-mono">#{issue.number}</span>
+                              </div>
+
+                              <div className="text-[11px] text-gray-400 truncate max-w-2xl leading-normal">
+                                {issue.body ? issue.body.replace(/[#*`_-]/g, "").slice(0, 140) : "No description metadata requested."}...
+                              </div>
+
+                              {/* Labels row info footer */}
+                              <div className="flex items-center gap-4 pt-1.5 flex-wrap">
+                                <div className="text-[10px] text-gray-500 font-mono">
+                                  Opened by <strong className="text-gray-300">@{issue.user.login}</strong> • {formatRelativeTime(issue.created_at)}
+                                </div>
+
+                                {issue.labels.map((lbl) => (
+                                  <span
+                                    key={lbl.name}
+                                    className="px-2 py-0.5 rounded text-[10px] font-mono leading-none border"
+                                    style={{
+                                      backgroundColor: `#${lbl.color}15`,
+                                      borderColor: `#${lbl.color}40`,
+                                      color: `#${lbl.color}`
+                                    }}
+                                  >
+                                    {lbl.name}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Priority column */}
+                            <div className="shrink-0 flex flex-col items-end gap-1.5">
+                              {issue.priority && (
+                                <span className={`text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded border ${
+                                  issue.priority === "high"
+                                    ? "bg-red-950/40 text-red-400 border-red-900"
+                                    : issue.priority === "medium"
+                                    ? "bg-amber-950/40 text-amber-400 border-amber-900"
+                                    : "bg-blue-950/40 text-blue-400 border-blue-900"
+                                }`}>
+                                  {issue.priority} priority
+                                </span>
+                              )}
+                              <span className="text-[10px] text-gray-500 font-mono">Comments: {issue.comments?.length || 0}</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 2: PULL REQUESTS */}
+                  {dashTab === "prs" && (
+                    <div className="space-y-3">
+                      {dashPRs.length === 0 ? (
+                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+                          <GitPullRequest size={20} className="mx-auto text-gray-600 mb-2 animate-bounce" />
+                          <p className="text-xs font-mono">No awaiting pull request reviews found.</p>
+                        </div>
+                      ) : (
+                        dashPRs.map((pr) => {
+                          const stateColor = pr.state === "open" ? "text-emerald-400 bg-emerald-950/40 border-emerald-900" : "text-purple-400 bg-purple-950/40 border-purple-900";
+                          const ciState = pr.ci_status?.state || "pending";
+                          
+                          return (
+                            <div
+                              key={pr.number}
+                              onClick={() => openTabs(`pr-${selectedRepo.full_name}-${pr.number}`, "pr", `PR #${pr.number}`, selectedRepo.owner.login, selectedRepo.name, pr.number)}
+                              className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
+                            >
+                              <div className="space-y-1.5 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded border font-bold uppercase leading-none ${stateColor}`}>
+                                    {pr.state}
+                                  </span>
+                                  <span className="text-xs font-bold text-white tracking-tight truncate max-w-lg">
+                                    {pr.title}
+                                  </span>
+                                  <span className="text-[10px] text-gray-500 font-mono">#{pr.number}</span>
+                                </div>
+
+                                <div className="text-[11px] text-gray-400 truncate max-w-2xl leading-normal">
+                                  {pr.body ? pr.body.replace(/[#*`_-]/g, "").slice(0, 145) : "*No PR descriptive scope provided.*"}...
+                                </div>
+
+                                <div className="flex items-center gap-4 pt-1.5 flex-wrap">
+                                  <div className="text-[10px] text-gray-500 font-mono">
+                                    Proposed by <strong className="text-gray-300">@{pr.user.login}</strong> • {formatRelativeTime(pr.created_at)}
+                                  </div>
+
+                                  {/* PR Specific continuous integration badge right in line */}
+                                  <div className={`flex items-center gap-1 px-2.5 py-0.5 rounded border text-[10px] font-mono font-bold leading-tight ${
+                                    ciState === "success"
+                                      ? "bg-emerald-950/40 text-emerald-400 border-emerald-900"
+                                      : ciState === "failure"
+                                      ? "bg-red-950/40 text-red-400 border-red-900"
+                                      : "bg-amber-950/40 text-amber-400 border-amber-900"
+                                  }`}>
+                                    <span>CI: {ciState}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="shrink-0 flex flex-col items-end gap-1 font-mono text-[10.5px]">
+                                <span className="text-emerald-400 flex items-center gap-1 font-bold">
+                                  +{pr.diff?.reduce((acc, curr) => acc + (curr.additions || 0), 0) || 0}
+                                </span>
+                                <span className="text-red-400 flex items-center gap-1 font-bold">
+                                  -{pr.diff?.reduce((acc, curr) => acc + (curr.deletions || 0), 0) || 0}
+                                </span>
+                                <span className="text-gray-500 text-[9.5px]">Comments: {pr.comments?.length || 0}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 3: ACTIVE BRANCHES */}
+                  {dashTab === "branches" && (
+                    <div className="space-y-2.5">
+                      {branches.map((b) => (
+                        <div
+                          key={b.name}
+                          className="p-3.5 rounded bg-[#252526] border border-[#3e3e3e]/80 flex items-center justify-between group select-none"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="p-1 px-1.5 bg-[#1b1b1c] rounded border border-gray-700/50 text-[#007acc]">
+                              <GitBranch size={13} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs text-white truncate font-mono">
+                                {b.name}
+                              </div>
+                              <div className="text-[10px] text-gray-500 mt-0.5 font-mono">
+                                Head Commit Pointer: <code className="bg-[#111] px-1 py-0.5 text-amber-300 font-semibold rounded">{b.commit.sha}</code>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4 font-mono text-[11px] text-gray-400">
+                            <span className="flex items-center gap-1">
+                              <Clock size={11} className="text-gray-500" />
+                              Pushed {formatRelativeTime(b.commit.date)}
+                            </span>
+                            <span className="px-2 py-0.5 bg-gray-800 text-[10px] text-gray-400 rounded border border-transparent group-hover:border-gray-600 select-none">
+                              HEAD synced
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* RENDER VIEW 2: THE MAIN REPOSITORY EXPLORER GRID VIEW (Clean Full Width, Filtered via LHS) */
+        <div className="flex-1 flex min-h-0 overflow-hidden bg-[#141416]">
+
+          {/* Core Repository Grid container segment */}
+          <div className="flex-1 flex flex-col min-h-0 bg-[#161619]">
+            
+            {/* Upper Advanced Filter Box */}
+            <div className="p-4 border-b border-[#3e3e3e] bg-[#222224] flex flex-wrap items-center justify-between gap-4 select-none shrink-0">
+              
+              {/* Left filter selections: Fuzzy Search + Languages */}
+              <div className="flex items-center gap-3 flex-1 min-w-[280px]">
+                {/* Active Sidebar Project Filter Chip Indicator */}
+                {(() => {
+                  const activeProject = projectTags.find((p) => p.id === selectedProjectFilter);
+                  if (!activeProject) return null;
+                  return (
+                    <div className="flex items-center gap-2 bg-[#094771]/50 border border-[#007acc]/45 pl-2.5 pr-1.5 py-1 rounded text-xs select-none shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: activeProject.color }} />
+                      <span className="text-gray-400 font-mono text-[10.5px]">Project:</span>
+                      <span className="text-white font-semibold font-mono">{activeProject.name}</span>
+                      <button
+                        onClick={() => onSelectProjectFilter("all")}
+                        className="text-gray-400 hover:text-white p-0.5 rounded cursor-pointer transition-colors ml-1 shrink-0"
+                        title="Clear project filter back to all"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                <div className="flex-1 max-w-sm flex items-center gap-2 border border-[#3e3e3e] bg-[#1a1a1c] px-3 py-1.5 text-xs text-white rounded focus-within:border-[#007acc] transition-colors relative">
+                  <Search size={13} className="text-gray-500 shrink-0" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Fuzzy match / character subsequence..."
+                    className="w-full bg-transparent outline-none placeholder-gray-600 font-mono"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery("")}
+                      className="text-gray-500 hover:text-white shrink-0 p-0.5 rounded cursor-pointer"
+                    >
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-gray-500 font-mono font-medium">Lang:</span>
+                  <select
+                    className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
+                    value={selectedLanguageFilter}
+                    onChange={(e) => setSelectedLanguageFilter(e.target.value)}
+                  >
+                    <option value="all">All Specs</option>
+                    {languagesList.map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Right ordering criteria: Sort state directions */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-500 font-mono font-medium">Sort by:</span>
+                <select
+                  className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                >
+                  <option value="updated">Last Synchronized</option>
+                  <option value="name">Alphabetical Label</option>
+                  <option value="stars">Stargazer Rating</option>
+                  <option value="issues">Open Bugs/Issues</option>
+                  <option value="created">Generation Age</option>
+                </select>
+
+                <button
+                  onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
+                  className="p-1 px-1.5 bg-[#1a1a1c] border border-[#3e3e3e] rounded hover:bg-[#2d2d2f] hover:border-gray-500 cursor-pointer text-white flex items-center transition-colors"
+                  title={`Ascending/Descending Toggle: ${sortOrder.toUpperCase()}`}
+                >
+                  <ArrowUpDown size={12} />
+                </button>
+              </div>
+            </div>
+
+            {/* Empty result indication box */}
+            {sortedRepos.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
+                <Inbox size={32} className="text-gray-600 mb-3" />
+                <p className="text-xs font-mono">No matching repository index matches current filter parameters.</p>
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="text-[#007acc] hover:underline text-xs mt-2 font-mono cursor-pointer"
+                  >
+                    Reset fuzzy search terms
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* The Beautiful Cards Grid Segment */
+              <div className="flex-1 overflow-y-auto p-5 select-none custom-scrollbar">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4.5">
+                  {sortedRepos.map((repo) => {
+                    const mappedProjs = getMappedProjectsForRepo(repo.full_name);
+                    const isDragged = draggedRepo === repo.full_name;
+                    
+                    return (
+                      <div
+                        key={repo.id}
+                        draggable={true}
+                        onDragStart={(e) => handleDragStart(e, repo.full_name)}
+                        onDragEnd={handleDragEnd}
+                        onTouchStart={(e) => handleTouchStart(e, repo)}
+                        onTouchEnd={handleTouchEnd}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setTouchMenuRepo(repo);
+                          setTouchMenuPos({ x: e.clientX, y: e.clientY });
+                        }}
+                        className={`bg-[#222224] border rounded p-4 flex flex-col justify-between gap-4 shadow transition-all cursor-grab active:cursor-grabbing relative overflow-hidden select-none hover:shadow-md ${
+                          isDragged
+                            ? "opacity-40 border-dashed border-amber-500 bg-[#3a2010]"
+                            : "border-[#3e3e3e]/80 hover:border-gray-500"
+                        }`}
+                      >
+                        {/* Main info card body */}
+                        <div className="space-y-2.5">
+                          {/* Title with metadata lock indicator */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <img
+                                src={repo.owner.avatar_url}
+                                alt={repo.owner.login}
+                                className="w-5.5 h-5.5 rounded bg-gray-800 border border-gray-700 shrink-0"
+                                referrerPolicy="no-referrer"
+                              />
+                              <h3 className="font-bold text-xs text-white truncate max-w-[130px] font-mono leading-none tracking-tight">
+                                {repo.name}
+                              </h3>
+                            </div>
+
+                            <span className="text-[9.5px] font-mono font-semibold text-gray-500 bg-gray-800/40 px-1.5 py-0.5 rounded leading-none shrink-0 border border-gray-800/30">
+                              {repo.private ? "Private" : "Public"}
+                            </span>
+                          </div>
+
+                          {/* Descriptive blurb */}
+                          {repo.description ? (
+                            <p className="text-[11px] text-gray-400 leading-relaxed truncate-2-lines h-8.5 select-text">
+                              {repo.description}
+                            </p>
+                          ) : (
+                            <div className="h-8.5 flex items-center">
+                              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-semibold tracking-wider font-mono uppercase bg-red-950/45 text-red-400 border border-red-900/40 leading-none">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                                No Description / Readme
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Language indicator inline badge */}
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-gray-400 leading-none">
+                              <span className="w-2.5 h-2.5 rounded-full bg-[#007acc]" />
+                              {repo.language || "Markdown"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Stats items rows & launched button */}
+                        <div className="space-y-3 pt-3 border-t border-[#3e3e3e]/60">
+                          {/* Inner columns stats metadata */}
+                          <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-gray-500">
+                            <div className="flex items-center gap-1">
+                              <Star size={11} className="text-amber-500 shrink-0" />
+                              <span>Stars: <strong className="text-gray-300">{repo.stargazers_count}</strong></span>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <AlertCircle size={11} className="text-emerald-500 shrink-0" />
+                              {/* Standard GitHub API open issues contains also pull requests */}
+                              <span>Issues: <strong className="text-gray-300">{repo.open_issues_count ?? 0}</strong></span>
+                            </div>
+
+                            <div className="col-span-2 flex items-center gap-1 text-[9.5px] text-gray-500 mt-1">
+                              <Clock size={10} className="shrink-0" />
+                              <span>Last Sync: <strong className="text-gray-400">{formatRelativeTime(syncTimestamps[repo.full_name] || repo.updated_at)}</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Bottom Row Tags list + Open dashboard button */}
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            {/* Tags list */}
+                            <div className="flex flex-wrap gap-1">
+                              {mappedProjs.length === 0 ? (
+                                <span className="text-[9px] font-mono text-gray-600 italic select-none">No Projects mapped</span>
+                              ) : (
+                                mappedProjs.map((p) => (
+                                  <span
+                                    key={p.id}
+                                    className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold leading-none border"
+                                    style={{
+                                      backgroundColor: `${p.color}15`,
+                                      borderColor: `${p.color}45`,
+                                      color: p.color
+                                    }}
+                                  >
+                                    {p.name}
+                                  </span>
+                                ))
+                              )}
+                            </div>
+
+                            {/* Click to open specific repo dashboard */}
+                            <button
+                              onClick={() => setSelectedRepo(repo)}
+                              className="px-2.5 py-1 bg-[#2e2e2f] hover:bg-[#343435] border border-gray-700/60 rounded text-white text-[10.5px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <span>Inspect Dashboard</span>
+                              <ChevronRight size={10} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Large Touch Hotspot icon overlay for desktop and touchscreen selection */}
+                        <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => setSelectedRepo(repo)}
+                            className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded cursor-help"
+                            title="Open repository configuration"
+                          >
+                            <Workflow size={11} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Touch Screen/Desktop context helper overlays floating menus (Assigned on long press or right click) */}
+      {touchMenuRepo && touchMenuPos && (
+        <div
+          className="fixed bg-[#1f1f20] border border-gray-700 rounded shadow-2xl py-1 w-52 z-50 text-xs font-sans text-gray-200 select-none animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: `${touchMenuPos.y}px`, left: `${touchMenuPos.x}px` }}
+        >
+          <div className="px-3 py-1.5 text-gray-500 font-mono font-semibold text-[10px] uppercase border-b border-gray-800">
+            {touchMenuRepo.name} options
+          </div>
+
+          <button
+            onClick={() => {
+              setSelectedRepo(touchMenuRepo);
+              setTouchMenuRepo(null);
+            }}
+            className="w-full text-left px-3.5 py-2 hover:bg-[#007acc] hover:text-white transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <Compass size={12} />
+            <span>Launch Repo Dashboard</span>
+          </button>
+
+          <button
+            onClick={() => {
+              onForceSync(touchMenuRepo.owner.login, touchMenuRepo.name);
+              setTouchMenuRepo(null);
+            }}
+            className="w-full text-left px-3.5 py-2 hover:bg-[#007acc] hover:text-white transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw size={12} />
+            <span>Force Delta Refresh</span>
+          </button>
+
+          {/* Quick inline Projects mapping options */}
+          <div className="border-t border-gray-800 mt-1">
+            <div className="px-3.5 py-1 text-[9px] font-mono font-bold text-[#f59e0b] uppercase select-none">
+              Assign to Project Folder
+            </div>
+
+            {projectTags.map((p) => {
+              const isMapped = p.repos.includes(touchMenuRepo.full_name);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    if (isMapped) {
+                      onRemoveRepoFromTag(p.id, touchMenuRepo.full_name);
+                    } else {
+                      onAddProjectTag(p.name, touchMenuRepo.full_name);
+                    }
+                    setTouchMenuRepo(null);
+                  }}
+                  className={`w-full text-left px-3.5 py-1.5 hover:bg-[#007acc] hover:text-white transition-colors flex items-center justify-between cursor-pointer ${
+                    isMapped ? "text-emerald-400 font-bold" : "text-gray-400"
+                  }`}
+                >
+                  <span className="truncate pr-1">{p.name} Project</span>
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            onClick={() => setTouchMenuRepo(null)}
+            className="w-full text-left px-3.5 py-2 hover:bg-gray-800 text-red-400 border-t border-gray-800 transition-colors flex items-center gap-2 cursor-pointer"
+          >
+            <X size={12} />
+            <span>Close Options Menu</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

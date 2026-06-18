@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import "dockview/dist/styles/dockview.css";
+
+/* Override Dockview Abyss theme to perfectly align with our exact VSCode palette */
+.dockview-theme-abyss {
+  --dv-background-color: #1e1e1e;
+  --dv-tabs-and-actions-container-background-color: #252526;
+  --dv-tab-background-color: #2d2d2d;
+  --dv-tab-active-background-color: #1e1e1e;
+  --dv-tab-active-color: #ffffff;
+  --dv-tab-inactive-color: #969696;
+  --dv-separator-color: #2b2b2b;
+  --dv-active-tab-border-color: #007acc;
+  --dv-tabs-container-height: 35px;
+}
+
+/* Align Dockview active tab bottom underline to VS Code styling */
+.dockview-theme-abyss .tab-container.tab-active {
+  border-top: 2px solid var(--dv-active-tab-border-color) !important;
+  font-weight: 600;
+}
+
+@layer base {
+  /* VSCode Custom UI Styling Scrollbar overrides */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: #1e1e1e;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #424245;
+    border: 2px solid #1e1e1e;
+    border-radius: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #4f4f52;
+  }
+
+  /* Thin scrollbar helper */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #3e3e42;
+    border-radius: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #4f4f52;
+  }
+
+  /* Scrollbar hiding helper */
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Fade animation */
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-spin-slow {
+    animation: spin 8s linear infinite;
+  }
+}

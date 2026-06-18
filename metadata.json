@@ -1,0 +1,6 @@
+{
+  "name": "GitHub Issue and PR Manager",
+  "description": "A VSCode-inspired dashboard for managing public and private GitHub repositories, issues, and PRs, featuring delta-sync caching, tagging, and detail tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
