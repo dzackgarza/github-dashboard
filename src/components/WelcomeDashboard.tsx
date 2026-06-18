@@ -176,7 +176,7 @@ export default function WelcomeDashboard() {
   }, [activityItems, inboxQuery, inboxFilter]);
 
   // Caching statistics
-  const cacheHitCount = syncLogs.filter((l) => l.type === "CACHE_HIT" || l.type === "304_HIT").length;
+  const cacheHitCount = syncLogs.filter((l) => l.type === "304_HIT").length;
   const successCount = syncLogs.filter((l) => l.type === "SUCCESS").length;
 
   return (

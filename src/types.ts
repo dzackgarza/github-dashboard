@@ -96,7 +96,7 @@ export interface SyncLog {
   id: string;
   timestamp: string;
   repo: string;
-  type: "INFO" | "SUCCESS" | "WARNING" | "ERROR" | "304_HIT" | "CACHE_HIT";
+  type: "INFO" | "SUCCESS" | "WARNING" | "ERROR" | "304_HIT";
   message: string;
   rateLimitRemaining: number;
 }

@@ -84,7 +84,7 @@ export default function VSCodeActivityBar({
           className={`p-1 rounded-full cursor-help ${
             isTokenConfigured ? "text-emerald-500" : "text-amber-500"
           }`}
-          title={isTokenConfigured ? "Token Verified & Authorized" : "Sandbox Simulator Mode Active"}
+          title={isTokenConfigured ? "Token Verified & Authorized" : "GitHub Token Missing"}
         >
           <ShieldCheck size={18} />
         </div>

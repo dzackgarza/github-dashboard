@@ -281,8 +281,8 @@ export default function App() {
       const limitsRes = await fetch("/api/github/rate-limit_status");
       const limit = await limitsRes.json();
       setRateLimit(limit);
-    } catch {
-      // Ignore fallback
+    } catch (err) {
+      console.error("Error refreshing telemetry and rate limits", err);
     }
   };
 

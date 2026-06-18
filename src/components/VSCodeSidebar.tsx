@@ -637,10 +637,10 @@ export default function VSCodeSidebar({
             </h4>
             <p className="text-gray-300 text-[11.5px]">
               This dashboard utilizes the server-side environment variable{" "}
-              <code className="text-[#007acc] bg-[#1e1e1e] p-0.5 rounded font-mono text-[11px]">GITHUB_PAT</code>.
+              <code className="text-[#007acc] bg-[#1e1e1e] p-0.5 rounded font-mono text-[11px]">GITHUB_TOKEN</code>.
             </p>
             <p className="text-gray-400 mt-2 text-[11.5px]">
-              If no token is supplied, the applet boots with a pre-seeded, interactive High-fidelity Simulator database so you can demo code review diffs and timelines instantly.
+              If the token is absent, the server stops before serving the dashboard.
             </p>
           </div>
 
