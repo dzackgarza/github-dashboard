@@ -268,6 +268,10 @@ export default function RepositoryExplorer() {
     return projectTags.filter((p) => p.repos.includes(fullName));
   };
 
+  const getAvailableProjectsForRepo = (fullName: string) => {
+    return projectTags.filter((p) => !p.repos.includes(fullName));
+  };
+
   return (
     <div className="w-full h-full bg-[#1e1e1e] flex flex-col min-h-0 relative select-none text-[#cccccc] font-sans">
       
@@ -356,7 +360,6 @@ export default function RepositoryExplorer() {
                 </p>
               </div>
 
-              {/* Mapped projects tags */}
               <div className="space-y-2">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold block">Assigned Projects</span>
                 <div className="flex flex-wrap gap-1.5">
@@ -366,14 +369,50 @@ export default function RepositoryExplorer() {
                     getMappedProjectsForRepo(selectedRepo.full_name).map((p) => (
                       <span
                         key={p.id}
-                        className="px-2.5 py-1 rounded text-[11px] font-mono font-semibold"
+                        className="rounded text-[11px] font-mono font-semibold flex items-center overflow-hidden"
                         style={{ backgroundColor: `${p.color}25`, border: `1px solid ${p.color}50`, color: p.color }}
                       >
-                        {p.name}
+                        <button
+                          type="button"
+                          onClick={() => openProject(p.id)}
+                          className="px-2 py-1 hover:bg-black/10"
+                          title={`Open ${p.name}`}
+                        >
+                          {p.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveRepoFromTag(p.id, selectedRepo.full_name)}
+                          className="px-1.5 py-1 hover:bg-black/20"
+                          title={`Remove ${selectedRepo.name} from ${p.name}`}
+                        >
+                          <X size={10} />
+                        </button>
                       </span>
                     ))
                   )}
                 </div>
+                {getAvailableProjectsForRepo(selectedRepo.full_name).length > 0 ? (
+                  <select
+                    value=""
+                    onChange={(event) => {
+                      const project = projectTags.find((tag) => tag.id === event.target.value);
+                      if (project) {
+                        onAddProjectTag(project.name, selectedRepo.full_name);
+                      }
+                    }}
+                    className="w-full bg-[#1a1a1c] border border-[#3e3e3e] text-gray-300 text-xs rounded px-2 py-1.5 outline-none focus:border-[#007acc]"
+                  >
+                    <option value="" disabled>Assign to project...</option>
+                    {getAvailableProjectsForRepo(selectedRepo.full_name).map((project) => (
+                      <option key={project.id} value={project.id}>{project.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="text-[10px] text-gray-600 font-mono">
+                    {projectTags.length === 0 ? "Create a project from the command palette." : "Assigned to all projects."}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -793,9 +832,7 @@ export default function RepositoryExplorer() {
                             </div>
                           </div>
 
-                          {/* Bottom Row Tags list + Open dashboard button */}
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            {/* Tags list */}
+                          <div className="flex flex-col gap-2">
                             <div className="flex flex-wrap gap-1">
                               {mappedProjs.length === 0 ? (
                                 <span className="text-[9px] font-mono text-gray-600 italic select-none">No Projects mapped</span>
@@ -820,6 +857,27 @@ export default function RepositoryExplorer() {
                                 ))
                               )}
                             </div>
+                            {getAvailableProjectsForRepo(repo.full_name).length > 0 ? (
+                              <select
+                                value=""
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  const project = projectTags.find((tag) => tag.id === event.target.value);
+                                  if (project) {
+                                    onAddProjectTag(project.name, repo.full_name);
+                                  }
+                                }}
+                                className="w-full bg-[#1a1a1c] border border-[#3e3e3e] text-gray-400 text-[10px] rounded px-2 py-1 outline-none focus:border-[#007acc]"
+                              >
+                                <option value="" disabled>Assign to project...</option>
+                                {getAvailableProjectsForRepo(repo.full_name).map((project) => (
+                                  <option key={project.id} value={project.id}>{project.name}</option>
+                                ))}
+                              </select>
+                            ) : projectTags.length === 0 ? (
+                              <span className="text-[9px] font-mono text-gray-600 italic select-none">Create projects from the command palette</span>
+                            ) : null}
                           </div>
                         </div>
                       </div>

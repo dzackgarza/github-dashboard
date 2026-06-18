@@ -81,6 +81,7 @@ export default function WelcomeDashboard() {
     repos,
     projectTags,
     githubUser,
+    openProject,
     openTabs
   } = useWorkspace();
 
@@ -586,9 +587,11 @@ export default function WelcomeDashboard() {
                   </div>
                 ) : (
                   projectTags.map((tag) => (
-                    <div
+                    <button
                       key={tag.id}
-                      className="p-2.5 rounded bg-[#1e1e1f] hover:bg-[#282829] border border-gray-800 flex items-center justify-between"
+                      type="button"
+                      onClick={() => openProject(tag.id)}
+                      className="w-full text-left p-2.5 rounded bg-[#1e1e1f] hover:bg-[#282829] border border-gray-800 flex items-center justify-between"
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -598,12 +601,12 @@ export default function WelcomeDashboard() {
                           />
                           <span className="text-xs font-semibold text-gray-200 truncate">{tag.name}</span>
                         </div>
-                        <div className="text-[10px] text-gray-500 mt-1 font-mono hover:underline cursor-pointer" onClick={() => openTabs("explorer", "welcome", "Repository Explorer")}>
+                        <div className="text-[10px] text-gray-500 mt-1 font-mono">
                           Mapped: {tag.repos.length} {tag.repos.length === 1 ? "repository" : "repositories"}
                         </div>
                       </div>
                       <ChevronRight size={13} className="text-gray-600 shrink-0" />
-                    </div>
+                    </button>
                   ))
                 )}
               </div>

@@ -565,6 +565,7 @@ export default function App() {
               onSelectPR={(owner, repo, data) => handleOpenTab(`pr-${owner}-${repo}-${data.number}`, "pr", `PR #${data.number}: ${data.title}`, owner, repo, data.number)}
               onAddProjectTag={handleAddProjectTag}
               onRemoveRepoFromTag={handleRemoveRepoFromTag}
+              openProject={handleOpenProject}
               openTabs={handleOpenTab}
               activeTabId={activeTabId}
               onClose={() => setSidebarOpen(false)}

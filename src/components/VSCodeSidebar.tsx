@@ -28,6 +28,7 @@ interface VSCodeSidebarProps {
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
+  openProject: (projectId: string) => void;
   openTabs: (id: string, type: "issue" | "pr" | "settings" | "welcome", title: string, owner?: string, repo?: string, number?: number) => void;
   activeTabId: string;
   onClose?: () => void;
@@ -45,6 +46,7 @@ export default function VSCodeSidebar({
   onSelectPR,
   onAddProjectTag,
   onRemoveRepoFromTag,
+  openProject,
   openTabs,
   activeTabId,
   onClose,
@@ -426,7 +428,7 @@ export default function VSCodeSidebar({
                     projectTags.map((tag) => (
                       <div key={tag.id} className="group/tag select-none mb-1">
                         <div
-                          onClick={() => onSelectProjectFilter(selectedProjectFilter === tag.id ? "all" : tag.id)}
+                          onClick={() => openProject(tag.id)}
                           className={`flex items-center justify-between py-1 px-4 cursor-pointer rounded text-[11.5px] transition-all ${
                             selectedProjectFilter === tag.id
                               ? "bg-[#094771] text-white border-l-2 border-[#007acc] rounded-none"
