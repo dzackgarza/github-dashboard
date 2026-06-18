@@ -218,17 +218,6 @@ export default function WelcomeDashboard() {
     return repos.filter((r) => r.private).length;
   }, [repos]);
 
-  const sortedLanguages = useMemo(() => {
-    const counts: Record<string, number> = {};
-    repos.forEach((r) => {
-      const l = r.language || "Markdown/Docs";
-      counts[l] = (counts[l] || 0) + 1;
-    });
-    return Object.entries(counts)
-      .map(([lang, count]) => ({ lang, count, percent: Math.round((count / (repos.length || 1)) * 100) }))
-      .sort((a, b) => b.count - a.count);
-  }, [repos]);
-
   // Inbox filters
   const processedInboxItems = useMemo(() => {
     return activityItems.filter((item) => {
@@ -526,49 +515,6 @@ export default function WelcomeDashboard() {
 
           {/* Account Portfolio Sidebar (Col span 4) */}
           <div className="lg:col-span-4 space-y-4">
-            
-            {/* Tech Languages Portfolio Breakdown */}
-            <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-md">
-              <h3 className="text-xs font-bold font-sans tracking-wider uppercase text-white pb-3 border-b border-[#3e3e3e] flex items-center justify-between select-none">
-                <span className="flex items-center gap-2">
-                  <FolderGit2 size={13} className="text-sky-400" />
-                  Languages
-                </span>
-                <span className="font-mono text-[10px] text-gray-500 font-normal">{repos.length} repos</span>
-              </h3>
-              
-              <div className="mt-4 space-y-3.5">
-                {sortedLanguages.length === 0 ? (
-                  <p className="text-xs italic text-gray-500 font-mono text-center py-2">No language parameters detected.</p>
-                ) : (
-                  sortedLanguages.map(({ lang, count, percent }) => (
-                    <div key={lang} className="space-y-1 select-none">
-                      <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="text-gray-300 font-medium">{lang}</span>
-                        <div className="text-gray-500 text-[11px]">
-                          <span>{count} {count === 1 ? "repo" : "repos"}</span>
-                          <span className="ml-1.5 text-gray-400">({percent}%)</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-[#1e1e1f] rounded-full h-1.5 overflow-hidden border border-black/10">
-                        <div
-                          className="h-full bg-[#007acc] rounded-full transition-all duration-500"
-                          style={{
-                            width: `${percent}%`,
-                            backgroundColor: 
-                              lang === "TypeScript" ? "#3178c6" :
-                              lang === "JavaScript" ? "#f1e05a" :
-                              lang === "Python" ? "#3572A5" :
-                              lang === "HTML" ? "#e34c26" :
-                              lang === "Rust" ? "#dea584" : "#007acc"
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
 
             {/* Custom Created Tag Groups */}
             <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-md select-none">

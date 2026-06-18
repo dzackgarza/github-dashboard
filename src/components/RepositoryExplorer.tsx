@@ -56,8 +56,7 @@ export default function RepositoryExplorer() {
 
   // Search, Sort, Filter
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedLanguageFilter, setSelectedLanguageFilter] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<"name" | "issues" | "updated" | "language">("updated");
+  const [sortBy, setSortBy] = useState<"name" | "issues" | "updated">("updated");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
   // Drag and drop visual cues
@@ -131,30 +130,21 @@ export default function RepositoryExplorer() {
     return false;
   };
 
-  // Get unique languages list
-  const languagesList = Array.from(new Set(repos.map((r) => r.language || "Markdown")));
-
   // Filter repos
   const filteredRepos = repos.filter((repo) => {
     // 1. Fuzzy query filter
     const matchesQuery =
       fuzzyMatch(repo.full_name, searchQuery) ||
-      fuzzyMatch(repo.description || "", searchQuery) ||
-      fuzzyMatch(repo.language || "", searchQuery);
+      fuzzyMatch(repo.description || "", searchQuery);
 
-    // 2. Language filter
-    const matchesLanguage =
-      selectedLanguageFilter === "all" ||
-      (repo.language || "Markdown") === selectedLanguageFilter;
-
-    // 3. Project Filter
+    // 2. Project Filter
     let matchesProject = true;
     if (selectedProjectFilter !== "all") {
       const proj = projectTags.find((t) => t.id === selectedProjectFilter);
       matchesProject = proj ? proj.repos.includes(repo.full_name) : false;
     }
 
-    return matchesQuery && matchesLanguage && matchesProject;
+    return matchesQuery && matchesProject;
   });
 
   // Sort repos
@@ -168,9 +158,6 @@ export default function RepositoryExplorer() {
     } else if (sortBy === "updated") {
       valueA = new Date(a.updated_at).getTime();
       valueB = new Date(b.updated_at).getTime();
-    } else if (sortBy === "language") {
-      valueA = a.language || "";
-      valueB = b.language || "";
     }
 
     if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
@@ -342,10 +329,6 @@ export default function RepositoryExplorer() {
                     {selectedRepo.private ? <Lock size={10} className="text-amber-500" /> : <Unlock size={10} className="text-emerald-500" />}
                     {selectedRepo.private ? "Private" : "Public"}
                   </span>
-                </div>
-                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Language:</span>
-                  <span className="text-[#007acc] font-bold">{selectedRepo.language || "Markdown"}</span>
                 </div>
                 <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
                   <span className="text-gray-500">Updated:</span>
@@ -710,11 +693,6 @@ export default function RepositoryExplorer() {
                           <span className="text-[9.5px] font-mono font-semibold text-gray-500 bg-gray-800/40 px-1.5 py-0.5 rounded leading-none border border-gray-800/30">
                             {repo.private ? "Private" : "Public"}
                           </span>
-                          {repo.language && (
-                            <span className="text-[10px] text-[#007acc] font-mono font-bold">
-                              {repo.language}
-                            </span>
-                          )}
                         </div>
                         <p className="text-[11px] text-gray-400 leading-relaxed break-words">
                           {repo.description || "No repository description."}
@@ -752,7 +730,7 @@ export default function RepositoryExplorer() {
             {/* Upper Advanced Filter Box */}
             <div className="p-4 border-b border-[#3e3e3e] bg-[#222224] flex flex-wrap items-center justify-between gap-4 select-none shrink-0">
               
-              {/* Left filter selections: Fuzzy Search + Languages */}
+              {/* Left filter selections: Fuzzy Search + Project */}
               <div className="flex items-center gap-3 flex-1 min-w-[280px]">
                 {/* Active Sidebar Project Filter Chip Indicator */}
                 {(() => {
@@ -793,21 +771,6 @@ export default function RepositoryExplorer() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-1.5 text-xs">
-                  <span className="text-gray-500 font-mono font-medium">Lang:</span>
-                  <select
-                    className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
-                    value={selectedLanguageFilter}
-                    onChange={(e) => setSelectedLanguageFilter(e.target.value)}
-                  >
-                    <option value="all">All languages</option>
-                    {languagesList.map((l) => (
-                      <option key={l} value={l}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
               {/* Right ordering criteria: Sort state directions */}
@@ -821,7 +784,6 @@ export default function RepositoryExplorer() {
                   <option value="updated">Updated</option>
                   <option value="name">Name</option>
                   <option value="issues">Open issues</option>
-                  <option value="language">Language</option>
                 </select>
 
                 <button
@@ -916,13 +878,6 @@ export default function RepositoryExplorer() {
                             </div>
                           )}
 
-                          {/* Language indicator inline badge */}
-                          <div className="flex items-center gap-2.5 flex-wrap">
-                            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-gray-400 leading-none">
-                              <span className="w-2.5 h-2.5 rounded-full bg-[#007acc]" />
-                              {repo.language || "Markdown"}
-                            </span>
-                          </div>
                         </div>
 
                         {/* Stats items rows & launched button */}
