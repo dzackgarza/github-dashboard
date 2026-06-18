@@ -1,20 +1,19 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# GitHub Dashboard
 
-# Run and deploy your AI Studio app
+Local dashboard for tracking repositories, project groups, open issues, open pull requests, and GitHub sync diagnostics.
 
-This contains everything you need to run your app locally.
+## Run
 
-View your app in AI Studio: https://ai.studio/apps/9128b62a-71f9-43b7-85af-0d3be041e99a
+Use the project justfile:
 
-## Run Locally
+```bash
+just dev
+```
 
-**Prerequisites:**  Node.js
+The server requires `GITHUB_TOKEN` in the process environment.
 
+## Verify
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+```bash
+just test
+```

@@ -5,7 +5,6 @@ import {
   GitPullRequest,
   AlertCircle,
   Clock,
-  Star,
   Trash2,
   FolderPlus,
   Plus,
@@ -43,18 +42,20 @@ export default function RepositoryExplorer() {
     onCreateProjectTag,
     onDeleteProjectTag,
     openTabs,
+    activeRepoFullName,
+    openRepo,
+    openProject,
     selectedProjectFilter,
     setSelectedProjectFilter
   } = useWorkspace();
 
   const onSelectProjectFilter = setSelectedProjectFilter;
-  // Navigation
-  const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null);
+  const selectedRepo = repos.find((repo) => repo.full_name === activeRepoFullName) || null;
 
   // Search, Sort, Filter
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedLanguageFilter, setSelectedLanguageFilter] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<"name" | "stars" | "issues" | "updated" | "created">("updated");
+  const [sortBy, setSortBy] = useState<"name" | "issues" | "updated" | "language">("updated");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
   // Drag and drop visual cues
@@ -164,18 +165,15 @@ export default function RepositoryExplorer() {
     let valueA: any = a.full_name;
     let valueB: any = b.full_name;
 
-    if (sortBy === "stars") {
-      valueA = a.stargazers_count;
-      valueB = b.stargazers_count;
-    } else if (sortBy === "issues") {
+    if (sortBy === "issues") {
       valueA = a.open_issues_count ?? 0;
       valueB = b.open_issues_count ?? 0;
     } else if (sortBy === "updated") {
-      valueA = new Date(syncTimestamps[a.full_name] || a.updated_at).getTime();
-      valueB = new Date(syncTimestamps[b.full_name] || b.updated_at).getTime();
-    } else if (sortBy === "created") {
-      valueA = new Date(a.updated_at || "").getTime();
-      valueB = new Date(b.updated_at || "").getTime();
+      valueA = new Date(a.updated_at).getTime();
+      valueB = new Date(b.updated_at).getTime();
+    } else if (sortBy === "language") {
+      valueA = a.language || "";
+      valueB = b.language || "";
     }
 
     if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
@@ -302,17 +300,17 @@ export default function RepositoryExplorer() {
         <div className="flex items-center gap-2.5">
           {selectedRepo ? (
             <button
-              onClick={() => setSelectedRepo(null)}
+              onClick={() => openProject("all")}
               className="p-1 px-2.5 bg-[#2d2d2d] hover:bg-[#333333] text-white border border-[#3e3e3e] rounded flex items-center gap-1.5 transition-colors cursor-pointer text-xs font-semibold"
             >
               <ChevronLeft size={14} />
-              <span>Back to Library Explorer</span>
+              <span>Back to Repositories</span>
             </button>
           ) : (
             <div className="flex items-center gap-2">
               <FolderGit2 className="text-[#007acc]" size={18} />
               <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
-                Project & Repository Console
+                Repositories
               </h2>
             </div>
           )}
@@ -351,26 +349,19 @@ export default function RepositoryExplorer() {
                   <span className="text-gray-500">Kind:</span>
                   <span className="text-gray-300 flex items-center gap-1">
                     {selectedRepo.private ? <Lock size={10} className="text-amber-500" /> : <Unlock size={10} className="text-emerald-500" />}
-                    {selectedRepo.private ? "Private Node" : "Public Node"}
+                    {selectedRepo.private ? "Private" : "Public"}
                   </span>
                 </div>
                 <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Stargazers:</span>
-                  <span className="text-amber-400 flex items-center gap-1">
-                    <Star size={10} className="fill-amber-500" />
-                    {selectedRepo.stargazers_count}
-                  </span>
-                </div>
-                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Core Language:</span>
+                  <span className="text-gray-500">Language:</span>
                   <span className="text-[#007acc] font-bold">{selectedRepo.language || "Markdown"}</span>
                 </div>
                 <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Created:</span>
+                  <span className="text-gray-500">Updated:</span>
                   <span className="text-gray-400">{formatDate(selectedRepo.updated_at)}</span>
                 </div>
                 <div className="flex justify-between pt-0.5">
-                  <span className="text-gray-500">Sync Cycle:</span>
+                  <span className="text-gray-500">Sync:</span>
                   <span className="text-emerald-400 font-semibold flex items-center gap-1">
                     {isSyncing[selectedRepo.full_name] ? (
                       <RefreshCw size={9} className="animate-spin" />
@@ -383,9 +374,9 @@ export default function RepositoryExplorer() {
 
               {/* Description box */}
               <div className="space-y-1.5">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold">Workspace Project Scope</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold">Description</span>
                 <p className="text-xs text-gray-400 leading-normal bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40">
-                  {selectedRepo.description || "No project description metadata registered in repository."}
+                  {selectedRepo.description || "No repository description."}
                 </p>
               </div>
 
@@ -521,20 +512,8 @@ export default function RepositoryExplorer() {
                               </div>
                             </div>
 
-                            {/* Priority column */}
                             <div className="shrink-0 flex flex-col items-end gap-1.5">
-                              {issue.priority && (
-                                <span className={`text-[9px] font-mono font-bold uppercase px-2 py-0.5 rounded border ${
-                                  issue.priority === "high"
-                                    ? "bg-red-950/40 text-red-400 border-red-900"
-                                    : issue.priority === "medium"
-                                    ? "bg-amber-950/40 text-amber-400 border-amber-900"
-                                    : "bg-blue-950/40 text-blue-400 border-blue-900"
-                                }`}>
-                                  {issue.priority} priority
-                                </span>
-                              )}
-                              <span className="text-[10px] text-gray-500 font-mono">Comments: {issue.comments?.length || 0}</span>
+                              <span className="text-[10px] text-gray-500 font-mono">Comments: {typeof issue.comments === "number" ? issue.comments : issue.comments?.length ?? 0}</span>
                             </div>
                           </div>
                         ))
@@ -601,7 +580,7 @@ export default function RepositoryExplorer() {
                                 <span className="text-red-400 flex items-center gap-1 font-bold">
                                   -{pr.diff?.reduce((acc, curr) => acc + (curr.deletions || 0), 0) || 0}
                                 </span>
-                                <span className="text-gray-500 text-[9.5px]">Comments: {pr.comments?.length || 0}</span>
+                                <span className="text-gray-500 text-[9.5px]">Comments: {typeof pr.comments === "number" ? pr.comments : pr.comments?.length ?? 0}</span>
                               </div>
                             </div>
                           );
@@ -708,7 +687,7 @@ export default function RepositoryExplorer() {
                     value={selectedLanguageFilter}
                     onChange={(e) => setSelectedLanguageFilter(e.target.value)}
                   >
-                    <option value="all">All Specs</option>
+                    <option value="all">All languages</option>
                     {languagesList.map((l) => (
                       <option key={l} value={l}>
                         {l}
@@ -726,11 +705,10 @@ export default function RepositoryExplorer() {
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
                 >
-                  <option value="updated">Last Synchronized</option>
-                  <option value="name">Alphabetical Label</option>
-                  <option value="stars">Stargazer Rating</option>
-                  <option value="issues">Open Bugs/Issues</option>
-                  <option value="created">Generation Age</option>
+                  <option value="updated">Updated</option>
+                  <option value="name">Name</option>
+                  <option value="issues">Open issues</option>
+                  <option value="language">Language</option>
                 </select>
 
                 <button
@@ -814,7 +792,7 @@ export default function RepositoryExplorer() {
                             <div className="h-8.5 flex items-center">
                               <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[9px] font-semibold tracking-wider font-mono uppercase bg-red-950/45 text-red-400 border border-red-900/40 leading-none">
                                 <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-                                No Description / Readme
+                                No description
                               </span>
                             </div>
                           )}
@@ -833,11 +811,6 @@ export default function RepositoryExplorer() {
                           {/* Inner columns stats metadata */}
                           <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-gray-500">
                             <div className="flex items-center gap-1">
-                              <Star size={11} className="text-amber-500 shrink-0" />
-                              <span>Stars: <strong className="text-gray-300">{repo.stargazers_count}</strong></span>
-                            </div>
-
-                            <div className="flex items-center gap-1">
                               <AlertCircle size={11} className="text-emerald-500 shrink-0" />
                               {/* Standard GitHub API open issues contains also pull requests */}
                               <span>Issues: <strong className="text-gray-300">{repo.open_issues_count ?? 0}</strong></span>
@@ -845,7 +818,7 @@ export default function RepositoryExplorer() {
 
                             <div className="col-span-2 flex items-center gap-1 text-[9.5px] text-gray-500 mt-1">
                               <Clock size={10} className="shrink-0" />
-                              <span>Last Sync: <strong className="text-gray-400">{formatRelativeTime(syncTimestamps[repo.full_name] || repo.updated_at)}</strong></span>
+                              <span>Updated: <strong className="text-gray-400">{formatRelativeTime(repo.updated_at)}</strong></span>
                             </div>
                           </div>
 
@@ -857,8 +830,10 @@ export default function RepositoryExplorer() {
                                 <span className="text-[9px] font-mono text-gray-600 italic select-none">No Projects mapped</span>
                               ) : (
                                 mappedProjs.map((p) => (
-                                  <span
+                                  <button
                                     key={p.id}
+                                    type="button"
+                                    onClick={() => openProject(p.id)}
                                     className="px-1.5 py-0.5 rounded text-[9.5px] font-mono font-bold leading-none border"
                                     style={{
                                       backgroundColor: `${p.color}15`,
@@ -867,17 +842,17 @@ export default function RepositoryExplorer() {
                                     }}
                                   >
                                     {p.name}
-                                  </span>
+                                  </button>
                                 ))
                               )}
                             </div>
 
                             {/* Click to open specific repo dashboard */}
                             <button
-                              onClick={() => setSelectedRepo(repo)}
+                              onClick={() => openRepo(repo.full_name)}
                               className="px-2.5 py-1 bg-[#2e2e2f] hover:bg-[#343435] border border-gray-700/60 rounded text-white text-[10.5px] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
                             >
-                              <span>Inspect Dashboard</span>
+                              <span>Open Repo</span>
                               <ChevronRight size={10} />
                             </button>
                           </div>
@@ -886,9 +861,9 @@ export default function RepositoryExplorer() {
                         {/* Large Touch Hotspot icon overlay for desktop and touchscreen selection */}
                         <div className="absolute top-1 right-1 opacity-0 hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => setSelectedRepo(repo)}
+                            onClick={() => openRepo(repo.full_name)}
                             className="p-1.5 hover:bg-gray-800 text-gray-400 hover:text-white rounded cursor-help"
-                            title="Open repository configuration"
+                            title="Open repository page"
                           >
                             <Workflow size={11} />
                           </button>
@@ -915,13 +890,13 @@ export default function RepositoryExplorer() {
 
           <button
             onClick={() => {
-              setSelectedRepo(touchMenuRepo);
+              openRepo(touchMenuRepo.full_name);
               setTouchMenuRepo(null);
             }}
             className="w-full text-left px-3.5 py-2 hover:bg-[#007acc] hover:text-white transition-colors flex items-center gap-2 cursor-pointer"
           >
             <Compass size={12} />
-            <span>Launch Repo Dashboard</span>
+            <span>Open Repo</span>
           </button>
 
           <button
@@ -938,7 +913,7 @@ export default function RepositoryExplorer() {
           {/* Quick inline Projects mapping options */}
           <div className="border-t border-gray-800 mt-1">
             <div className="px-3.5 py-1 text-[9px] font-mono font-bold text-[#f59e0b] uppercase select-none">
-              Assign to Project Folder
+              Assign to Project
             </div>
 
             {projectTags.map((p) => {
@@ -958,7 +933,7 @@ export default function RepositoryExplorer() {
                     isMapped ? "text-emerald-400 font-bold" : "text-gray-400"
                   }`}
                 >
-                  <span className="truncate pr-1">{p.name} Project</span>
+                  <span className="truncate pr-1">{p.name}</span>
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
                 </button>
               );

@@ -2,26 +2,16 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   Activity,
   FolderGit2,
-  Database,
-  ShieldCheck,
-  CheckCircle2,
   AlertCircle,
   GitPullRequest,
-  TrendingUp,
-  Settings,
-  HelpCircle,
   RefreshCw,
   Clock,
-  Terminal,
   CircleDot,
   Search,
-  ExternalLink,
   ChevronRight,
-  Filter,
   User,
-  Star,
   Tag,
-  Workflow
+  FolderOpen
 } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { Issue, PullRequest, Repo } from "../types";
@@ -40,6 +30,12 @@ interface InboxCachePayload {
 }
 
 const INBOX_CACHE_PREFIX = "github_dashboard_inbox_cache";
+
+function invariant(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
 
 function getInboxCacheKey(login: string) {
   return `${INBOX_CACHE_PREFIX}:${login}`;
@@ -64,7 +60,10 @@ function readInboxCache(cacheKey: string, repoSignature: string): InboxCachePayl
     return null;
   }
 
-  return parsed;
+  return {
+    ...parsed,
+    items: parsed.items.filter((item) => item.state === "open"),
+  };
 }
 
 function writeInboxCache(cacheKey: string, repoSignature: string, items: InboxActivityItem[]) {
@@ -80,8 +79,6 @@ function writeInboxCache(cacheKey: string, repoSignature: string, items: InboxAc
 export default function WelcomeDashboard() {
   const {
     repos,
-    syncLogs,
-    rateLimit,
     projectTags,
     isTokenConfigured,
     githubUser,
@@ -92,7 +89,7 @@ export default function WelcomeDashboard() {
 
   // Selected filters inside the unified inbox
   const [inboxQuery, setInboxQuery] = useState("");
-  const [inboxFilter, setInboxFilter] = useState<"all" | "issues" | "prs" | "high">("all");
+  const [inboxFilter, setInboxFilter] = useState<"all" | "issues" | "prs">("all");
 
   // Flat list of combined issue and pull request activity items
   const [activityItems, setActivityItems] = useState<InboxActivityItem[]>([]);
@@ -234,7 +231,7 @@ export default function WelcomeDashboard() {
       .sort((a, b) => b.count - a.count);
   }, [repos]);
 
-  // Unified inbox filters
+  // Inbox filters
   const processedInboxItems = useMemo(() => {
     return activityItems.filter((item) => {
       // Search text query match
@@ -247,17 +244,11 @@ export default function WelcomeDashboard() {
         matchesSegment = item.type === "issue";
       } else if (inboxFilter === "prs") {
         matchesSegment = item.type === "pr";
-      } else if (inboxFilter === "high") {
-        matchesSegment = item.priority === "high";
       }
 
       return matchesSearch && matchesSegment;
     });
   }, [activityItems, inboxQuery, inboxFilter]);
-
-  // Caching statistics
-  const cacheHitCount = syncLogs.filter((l) => l.type === "304_HIT").length;
-  const successCount = syncLogs.filter((l) => l.type === "SUCCESS").length;
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#1e1e19] text-[#cccccc] font-sans h-full scrollbar-thin select-text">
@@ -321,7 +312,7 @@ export default function WelcomeDashboard() {
             className="px-3.5 py-1.5 bg-[#252526] hover:bg-[#2d2d2f] text-gray-200 border border-[#3e3e3e] rounded text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
           >
             <RefreshCw size={12} className={isSyncingGlobal ? "animate-spin" : ""} />
-            <span>Workspace Sync</span>
+            <span>Sync with GitHub</span>
           </button>
         </div>
       </div>
@@ -329,55 +320,69 @@ export default function WelcomeDashboard() {
       <div className="p-6 space-y-6">
         {/* 2. Top Metric KPI Strip */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm">
+          <button
+            type="button"
+            onClick={() => openTabs("explorer", "welcome", "Repositories")}
+            className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
+          >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Active Repos</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Repos</span>
               <FolderGit2 size={15} className="text-blue-400" />
             </div>
             <div className="text-xl font-bold text-white mt-1">{repos.length}</div>
             <div className="text-[10px] text-gray-500 mt-1 font-mono">
               {privateCount} private repos • {repos.length - privateCount} public
             </div>
-          </div>
+          </button>
 
-          <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm">
+          <button
+            type="button"
+            onClick={() => openTabs("explorer", "welcome", "Projects")}
+            className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
+          >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Open Workspace Issues</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Projects</span>
+              <FolderOpen size={15} className="text-emerald-400" />
+            </div>
+            <div className="text-xl font-bold text-white mt-1">{projectTags.length}</div>
+            <div className="text-[10px] text-gray-500 mt-1 font-mono">
+              {projectTags.reduce((sum, tag) => sum + tag.repos.length, 0)} repository mappings
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setInboxFilter("issues")}
+            className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
+          >
+            <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Open Issues</span>
               <AlertCircle size={15} className="text-amber-500" />
             </div>
             <div className="text-xl font-bold text-white mt-1">
               {activityItems.filter((i) => i.type === "issue" && i.state === "open").length}
             </div>
             <div className="text-[10px] text-gray-500 mt-1 font-mono">
-              {activityItems.filter((i) => i.type === "issue" && i.priority === "high" && i.state === "open").length} high-priority bugs tagged
+              Across {new Set(activityItems.filter((i) => i.type === "issue").map((i) => i.repoName)).size} repositories
             </div>
-          </div>
+          </button>
 
-          <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm">
+          <button
+            type="button"
+            onClick={() => setInboxFilter("prs")}
+            className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
+          >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Pending Pull Requests</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Open PRs</span>
               <GitPullRequest size={15} className="text-purple-400" />
             </div>
             <div className="text-xl font-bold text-white mt-1">
               {activityItems.filter((i) => i.type === "pr" && i.state === "open").length}
             </div>
             <div className="text-[10px] text-gray-500 mt-1 font-mono">
-              Across {new Set(activityItems.filter((i) => i.type === "pr").map((i) => i.repoName)).size} core feature-branches
+              Across {new Set(activityItems.filter((i) => i.type === "pr").map((i) => i.repoName)).size} repositories
             </div>
-          </div>
-
-          <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm">
-            <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Server Cache Efficiency</span>
-              <ShieldCheck size={15} className="text-emerald-400" />
-            </div>
-            <div className="text-xl font-bold text-white mt-1">
-              {Math.round((cacheHitCount / (cacheHitCount + successCount || 1)) * 100)}%
-            </div>
-            <div className="text-[10px] text-gray-500 mt-1 font-mono">
-              {cacheHitCount} saved calls • {rateLimit.remaining} limits remain
-            </div>
-          </div>
+          </button>
         </div>
 
         {/* 3. Main workspace layout split */}
@@ -392,9 +397,9 @@ export default function WelcomeDashboard() {
                 <div>
                   <h2 className="text-sm font-bold text-white uppercase tracking-wider font-sans flex items-center gap-1.5">
                     <Activity size={15} className="text-[#007acc]" />
-                    Unified Workspace Inbox
+                    Inbox
                   </h2>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Unified stream of active issues and PRs across all managed GitHub repositories</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Open issues and pull requests across tracked GitHub repositories</p>
                 </div>
 
                 {/* Search Inbox bar */}
@@ -439,14 +444,6 @@ export default function WelcomeDashboard() {
                     <GitPullRequest size={11} />
                     Pull Requests ({activityItems.filter((i) => i.type === "pr").length})
                   </button>
-                  <button
-                    onClick={() => setInboxFilter("high")}
-                    className={`px-2.5 py-1 rounded transition-colors flex items-center gap-1 ${
-                      inboxFilter === "high" ? "bg-red-950/50 text-red-300 border border-red-900" : "text-gray-400 hover:text-white"
-                    }`}
-                  >
-                    High Priority ({activityItems.filter((i) => i.priority === "high").length})
-                  </button>
                 </div>
                 
                 <span className="text-[10px] font-mono text-gray-500 italic">
@@ -469,20 +466,20 @@ export default function WelcomeDashboard() {
                 ) : (
                   processedInboxItems.map((item) => {
                     const isPR = item.type === "pr";
-                    const isClosed = item.state === "closed";
-                    const isHigh = item.priority === "high";
+                    const commentCount = typeof item.comments === "number" ? item.comments : item.comments?.length ?? 0;
 
                     return (
                       <div
                         key={item.compositeId}
-                        className="p-3.5 hover:bg-[#252528] transition-colors flex items-start justify-between gap-3 group"
+                        onClick={() => openTabs(item.compositeId, item.type, `#${item.number}: ${item.title}`, item.repoFullName.split('/')[0], item.repoName, item.number)}
+                        className="p-3.5 hover:bg-[#252528] transition-colors flex items-start justify-between gap-3 group cursor-pointer"
                       >
                         <div className="flex items-start gap-2.5 min-w-0">
                           {/* Type Indicator Icon */}
                           <div className={`p-1.5 rounded mt-0.5 shrink-0 ${
                             isPR 
-                              ? isClosed ? "bg-purple-950/30 text-purple-400" : "bg-emerald-950/30 text-emerald-400"
-                              : isHigh ? "bg-red-950/30 text-red-400" : "bg-amber-950/30 text-amber-400"
+                              ? "bg-emerald-950/30 text-emerald-400"
+                              : "bg-amber-950/30 text-amber-400"
                           }`}>
                             {isPR ? <GitPullRequest size={14} /> : <AlertCircle size={14} />}
                           </div>
@@ -490,22 +487,13 @@ export default function WelcomeDashboard() {
                           <div className="min-w-0">
                             {/* Title Line */}
                             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-                              <span
-                                onClick={() => openTabs(item.compositeId, item.type, `#${item.number}`, item.repoFullName.split('/')[0], item.repoName, item.number)}
-                                className="font-medium text-xs text-gray-200 hover:text-white hover:underline cursor-pointer font-sans leading-tight pr-1"
-                              >
+                              <span className="font-medium text-xs text-gray-200 group-hover:text-white group-hover:underline font-sans leading-tight pr-1">
                                 {item.title}
                               </span>
                               
                               <span className="text-[10px] font-mono text-gray-400 bg-gray-800/80 px-1.5 py-0.5 rounded border border-gray-700/40 select-none shrink-0 inline-flex items-center gap-1">
                                 {item.repoName} #{item.number}
                               </span>
-
-                              {isHigh && (
-                                <span className="text-[9px] font-mono font-bold text-red-400 bg-red-950/30 border border-red-900 px-1 rounded">
-                                  HIGH PRIORITY
-                                </span>
-                              )}
                             </div>
 
                             {/* Subtitle / Metadata details */}
@@ -520,7 +508,13 @@ export default function WelcomeDashboard() {
                                 <span className="text-gray-400 font-medium">@{item.user?.login}</span>
                               </span>
                               <span>•</span>
-                              <span>Ref: {formatDistanceToNow(item.created_at)}</span>
+                              <span>Created {formatDistanceToNow(item.created_at)}</span>
+                              <span>•</span>
+                              <span>Updated {formatDistanceToNow(item.updated_at || item.created_at)}</span>
+                              <span>•</span>
+                              <span>{commentCount} comments</span>
+                              <span>•</span>
+                              <span className="capitalize">{item.state}</span>
                               
                               {item.labels && item.labels.length > 0 && (
                                 <>
@@ -542,17 +536,7 @@ export default function WelcomeDashboard() {
                           </div>
                         </div>
 
-                        {/* GitHub Direct External Link */}
-                        <div className="shrink-0 flex items-center select-none opacity-40 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => window.open(item.html_url, "_blank", "noopener,noreferrer")}
-                            className="p-1 px-1.5 bg-[#1a1a1c] hover:bg-[#2e2e30] border border-gray-800 hover:border-gray-600 rounded text-gray-400 hover:text-white text-[10px] font-mono flex items-center gap-1 cursor-pointer transition-colors"
-                            title="Open direct issue page on github.com"
-                          >
-                            <ExternalLink size={10} />
-                            <span>GitHub</span>
-                          </button>
-                        </div>
+                        <ChevronRight size={14} className="shrink-0 text-gray-600 group-hover:text-gray-300 transition-colors" />
 
                       </div>
                     );
@@ -570,10 +554,10 @@ export default function WelcomeDashboard() {
             <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-md">
               <h3 className="text-xs font-bold font-sans tracking-wider uppercase text-white pb-3 border-b border-[#3e3e3e] flex items-center justify-between select-none">
                 <span className="flex items-center gap-2">
-                  <Workflow size={13} className="text-sky-400" />
-                  Language Portfolio
+                  <FolderGit2 size={13} className="text-sky-400" />
+                  Languages
                 </span>
-                <span className="font-mono text-[10px] text-gray-500 font-normal">Derivatives</span>
+                <span className="font-mono text-[10px] text-gray-500 font-normal">{repos.length} repos</span>
               </h3>
               
               <div className="mt-4 space-y-3.5">
@@ -614,16 +598,16 @@ export default function WelcomeDashboard() {
               <h3 className="text-xs font-bold font-sans tracking-wider uppercase text-white pb-3 border-b border-[#3e3e3e] flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <Tag size={13} className="text-amber-400" />
-                  Cognitive Project Tags
+                  Tags
                 </span>
-                <span className="font-mono text-[10px] bg-gray-800 text-gray-400 px-1.5 rounded">{projectTags.length} Groups</span>
+                <span className="font-mono text-[10px] bg-gray-800 text-gray-400 px-1.5 rounded">{projectTags.length} projects</span>
               </h3>
 
               <div className="mt-3.5 space-y-2">
                 {projectTags.length === 0 ? (
                   <div className="text-center py-6 text-xs text-gray-500 font-mono italic">
-                    <p>No project tag groups found.</p>
-                    <p className="text-[10px] text-gray-600 mt-0.5">Use Ctrl+P Palette to create active tags.</p>
+                    <p>No projects found.</p>
+                    <p className="text-[10px] text-gray-600 mt-0.5">Use Ctrl+P to create a project.</p>
                   </div>
                 ) : (
                   projectTags.map((tag) => (
@@ -649,31 +633,6 @@ export default function WelcomeDashboard() {
                 )}
               </div>
             </div>
-
-            {/* Active Rate Limits Monitor details */}
-            <div className="bg-[#252526] p-4 rounded border border-[#3e3e3e] bg-gradient-to-br from-[#252526] to-[#121213] select-none text-xs">
-              <div className="flex items-center gap-2 font-bold text-white border-b border-[#3e3e3e] pb-2.5 uppercase tracking-wide text-[11px]">
-                <Database size={13} className="text-emerald-400" />
-                <span>Rate Limits & Caching stats</span>
-              </div>
-              <div className="mt-3.5 space-y-2 font-mono text-[11px] text-gray-400">
-                <div className="flex justify-between">
-                  <span>Current Allowance remaining:</span>
-                  <strong className="text-white">{rateLimit.remaining} / {rateLimit.limit}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span>ETag efficiency hits:</span>
-                  <strong className="text-emerald-400">{cacheHitCount} hits ({Math.round(cacheHitCount/(cacheHitCount+successCount||1)*100)}%)</strong>
-                </div>
-                {rateLimit.reset > 0 && (
-                  <div className="flex justify-between text-[10px] text-gray-500 pt-1.5 border-t border-gray-800">
-                    <span>Allowance Cycle renews:</span>
-                    <span>{new Date(rateLimit.reset * 1000).toLocaleTimeString()}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
           </div>
 
         </div>
@@ -686,17 +645,16 @@ export default function WelcomeDashboard() {
 
 // Simple helper to compute direct relative differences inside WelcomeDashboard
 function formatDistanceToNow(dateString: string): string {
-  try {
-    const diff = new Date().getTime() - new Date(dateString).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(dateString).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  } catch {
-    return "recent";
-  }
+  const date = new Date(dateString);
+  const timestamp = date.getTime();
+  invariant(!Number.isNaN(timestamp), "GitHub timestamp must be a valid date.");
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }

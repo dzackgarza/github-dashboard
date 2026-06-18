@@ -32,6 +32,7 @@ describe("PRDetailView Sizing and Layout Constraints Test (TDD - Red Phase)", ()
     state: "open",
     html_url: "https://github.com/test/repo/pull/42",
     created_at: "2026-06-18T00:00:00Z",
+    updated_at: "2026-06-18T00:00:00Z",
     user: {
       login: "developer-john",
       avatar_url: "https://github.com/developer-john.png",
@@ -59,7 +60,7 @@ describe("PRDetailView Sizing and Layout Constraints Test (TDD - Red Phase)", ()
           json: () => Promise.resolve({
             ...mockPR,
             base_branch: "main",
-            head_branch: "patch-ui",
+            head_branch: "feature/github-dashboard-cleanup",
             diff: [
               { file: "src/App.tsx", status: "modified", additions: 12, deletions: 3, code: "console.log('hi');" }
             ],
@@ -81,8 +82,8 @@ describe("PRDetailView Sizing and Layout Constraints Test (TDD - Red Phase)", ()
     // Render the PRDetailView component
     render(
       <PRDetailView
-        owner="garage-corp"
-        repoName="internal-reporting"
+        owner="dzackgarza"
+        repoName="github-dashboard"
         pr={mockPR}
         onRefreshItem={() => {}}
       />
@@ -117,4 +118,3 @@ describe("PRDetailView Sizing and Layout Constraints Test (TDD - Red Phase)", ()
     expect(leftPanel.minSize).toBeLessThanOrEqual(20);
   });
 });
-

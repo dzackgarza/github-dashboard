@@ -8,10 +8,7 @@ import {
   ExternalLink,
   ChevronRight,
   User as UserIcon,
-  Plus,
   Send,
-  MoreHorizontal,
-  Tags,
   Tag,
   CircleDot,
   Loader2
@@ -40,16 +37,8 @@ export default function IssueDetailView({
   const [newCommentBody, setNewCommentBody] = useState("");
   const [postingComment, setPostingComment] = useState(false);
 
-  // Metadata states
-  const [priority, setPriority] = useState<"high" | "medium" | "low" | null>(issue.priority || null);
-  const [customLabels, setCustomLabels] = useState<string[]>(issue.customLabels || []);
-  const [newTagInput, setNewTagInput] = useState("");
-  const [updatingMetadata, setUpdatingMetadata] = useState(false);
-
   // Sync state if issue receives updates
   useEffect(() => {
-    setPriority(issue.priority || null);
-    setCustomLabels(issue.customLabels || []);
     fetchComments();
   }, [issue.number, fullName]);
 
@@ -91,49 +80,6 @@ export default function IssueDetailView({
     }
   };
 
-  const handleUpdateMetadata = async (newPriority: typeof priority, updatedLabels: string[]) => {
-    setUpdatingMetadata(true);
-    try {
-      const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${issue.number}/metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ priority: newPriority, customLabels: updatedLabels })
-      });
-      if (res.ok) {
-        const resData = await res.json();
-        setPriority(resData.priority);
-        setCustomLabels(resData.customLabels || []);
-        onRefreshItem();
-      }
-    } catch (err) {
-      console.error("Failed to sync metadata attributes", err);
-    } finally {
-      setUpdatingMetadata(false);
-    }
-  };
-
-  const handleAddCustomLabel = () => {
-    if (!newTagInput.trim()) return;
-    const cleanTag = newTagInput.trim().toLowerCase();
-    if (!customLabels.includes(cleanTag)) {
-      const updated = [...customLabels, cleanTag];
-      setCustomLabels(updated);
-      handleUpdateMetadata(priority, updated);
-    }
-    setNewTagInput("");
-  };
-
-  const handleRemoveCustomLabel = (tagToRemove: string) => {
-    const updated = customLabels.filter((t) => t !== tagToRemove);
-    setCustomLabels(updated);
-    handleUpdateMetadata(priority, updated);
-  };
-
-  const handleSetPriority = (p: typeof priority) => {
-    setPriority(p);
-    handleUpdateMetadata(p, customLabels);
-  };
-
   return (
     <div className="flex-1 flex overflow-hidden bg-[#1e1e1e] text-[#cccccc] font-sans h-full select-text">
       {/* Left panel: Conversation */}
@@ -160,7 +106,7 @@ export default function IssueDetailView({
               className="px-3 py-1 bg-[#3c3c3c] text-white hover:bg-gray-700 transition-colors font-mono text-[11px] rounded flex items-center gap-1.5 shrink-0 select-none cursor-pointer border border-[#3e3e3e]"
             >
               <ExternalLink size={12} />
-              Open GitHub
+              Open in GitHub
             </a>
           </div>
 
@@ -337,113 +283,61 @@ export default function IssueDetailView({
         </div>
       </div>
 
-      {/* Right side Inspector panel (VSCode Properties Metadata Panel) */}
+      {/* Right side Inspector panel */}
       <div className="w-[280px] h-full bg-[#252526] p-4 flex flex-col justify-between shrink-0 select-none border-l border-[#3e3e3e]">
         <div className="space-y-5">
-          {/* Section: Priority */}
-          <div className="space-y-2 pb-4 border-b border-[#3e3e3e]">
-            <div className="text-[10px] font-semibold font-mono tracking-wider text-gray-500 uppercase">
-              Priority Ranking (Persisted)
-            </div>
-            <div className="grid grid-cols-3 gap-1 px-1 py-1">
-              {(["high", "medium", "low"] as const).map((p) => {
-                const isActive = priority === p;
-                let colorClass = "bg-[#1e1e1e]/50 text-gray-500 border border-transparent";
-                if (isActive) {
-                  if (p === "high") colorClass = "bg-red-950 text-red-400 border border-red-900";
-                  if (p === "medium") colorClass = "bg-amber-950 text-amber-500 border border-amber-900";
-                  if (p === "low") colorClass = "bg-blue-950 text-blue-400 border border-blue-900";
-                }
-
-                return (
-                  <button
-                    key={p}
-                    onClick={() => handleSetPriority(isActive ? null : p)}
-                    className={`py-1 text-[10.5px] font-bold font-mono rounded cursor-pointer text-center uppercase leading-none capitalize transition-colors ${colorClass}`}
-                    title={`Mark priority: ${p}`}
-                  >
-                    {p}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Section: Custom Tag Labels */}
+          {/* Section: GitHub Labels */}
           <div className="space-y-2.5 pb-4 border-b border-[#3e3e3e]">
             <div className="text-[10px] font-semibold font-mono tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
-              <Tags size={12} />
-              <span>Workspace Tags Annotation</span>
+              <Tag size={12} />
+              <span>GitHub Labels</span>
             </div>
 
-            {/* Custom tagging render list */}
             <div className="flex flex-wrap gap-1 px-1">
-              {customLabels.length === 0 ? (
-                <div className="text-[11px] text-gray-500 italic p-1">No custom annotation tags attached to this item.</div>
+              {issue.labels.length === 0 ? (
+                <div className="text-[11px] text-gray-500 italic p-1">No GitHub labels on this issue.</div>
               ) : (
-                customLabels.map((tag) => (
+                issue.labels.map((label) => (
                   <span
-                    key={tag}
-                    className="text-[10px] font-mono bg-zinc-800 hover:bg-zinc-700/80 hover:text-red-400 border border-zinc-700/50 rounded pl-2.5 pr-1.5 py-0.5 text-zinc-300 font-bold flex items-center gap-1 cursor-delete shrink-0 select-none animate-fade-in"
-                    onClick={() => handleRemoveCustomLabel(tag)}
-                    title="Click to remove custom tag"
+                    key={label.name}
+                    className="text-[10px] font-mono rounded px-2 py-0.5 font-bold shrink-0 select-none"
+                    style={{
+                      backgroundColor: `#${label.color}1e`,
+                      border: `1px solid #${label.color}55`,
+                      color: `#${label.color}`
+                    }}
                   >
-                    {tag}
-                    <span>&times;</span>
+                    {label.name}
                   </span>
                 ))
               )}
             </div>
-
-            {/* Add Custom Annotator tagging input */}
-            <div className="flex items-center gap-1 border border-[#3e3e3e] bg-[#1e1e1e] rounded px-2 text-xs focus-within:border-[#007acc]">
-              <Tag size={11} className="text-gray-500 shrink-0" />
-              <input
-                type="text"
-                placeholder="New annotation tag..."
-                className="w-full bg-transparent border-none py-1.5 px-0.5 text-white placeholder-gray-600 outline-none focus:ring-0 select-text text-[11px] leading-snug font-sans"
-                value={newTagInput}
-                onChange={(e) => setNewTagInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleAddCustomLabel();
-                }}
-              />
-              <button
-                onClick={handleAddCustomLabel}
-                className="text-gray-400 hover:text-white transition-colors p-0.5 cursor-pointer"
-                title="Add tag"
-              >
-                <Plus size={13} />
-              </button>
-            </div>
           </div>
 
-          {/* Section: Repository parameters metadata */}
+          {/* Section: Repository details */}
           <div className="space-y-3.5 pb-4 text-[11px] leading-relaxed select-text">
             <div className="text-[10px] font-semibold font-mono tracking-wider text-gray-500 uppercase leading-none pb-0.5">
-              Owner/Workspace Node
+              Repository
             </div>
             <div className="space-y-2 font-mono">
               <div className="flex justify-between border-b border-[#3e3e3e]/50 pb-1">
-                <span className="text-gray-500 font-medium">Workspace namespace:</span>
+                <span className="text-gray-500 font-medium">Owner:</span>
                 <span className="text-gray-300 font-bold">{owner}</span>
               </div>
               <div className="flex justify-between border-b border-[#3e3e3e]/50 pb-1">
-                <span className="text-gray-500 font-medium">Repository folder:</span>
+                <span className="text-gray-500 font-medium">Repository:</span>
                 <span className="text-gray-300 font-bold">{repoName}</span>
               </div>
               <div className="flex justify-between border-b border-[#3e3e3e]/50 pb-1">
-                <span className="text-gray-500 font-medium">Item number reference:</span>
+                <span className="text-gray-500 font-medium">Issue:</span>
                 <span className="text-[#007acc] font-bold">#{issue.number}</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Sync update message indicator */}
         <div className="text-[10px] font-mono text-gray-500 border-t border-[#3e3e3e] pt-3 flex items-center justify-between select-none">
-          <span>{updatingMetadata ? "Saving metadata..." : "Persisted to db.json"}</span>
-          {updatingMetadata && <Loader2 className="animate-spin text-amber-500" size={10} />}
+          <span>GitHub issue data</span>
         </div>
       </div>
     </div>

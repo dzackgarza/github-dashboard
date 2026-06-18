@@ -349,21 +349,6 @@ export default function VSCodeSidebar({
                                                   <span className="text-gray-500 group-hover:text-gray-300 font-semibold mr-1.5">#{issue.number}</span>
                                                   {issue.title}
                                                 </span>
-
-                                                {/* Badge indicators */}
-                                                {issue.priority && (
-                                                  <span
-                                                    className={`ml-auto scale-90 text-[8px] font-mono rounded px-1 uppercase leading-none font-bold shrink-0 ${
-                                                      issue.priority === "high"
-                                                        ? "bg-red-950 text-red-400 border border-red-900"
-                                                        : issue.priority === "medium"
-                                                        ? "bg-amber-950 text-amber-400 border border-amber-900"
-                                                        : "bg-blue-950 text-blue-400 border border-blue-900"
-                                                    }`}
-                                                  >
-                                                    {issue.priority}
-                                                  </span>
-                                                )}
                                               </div>
                                             );
                                           })

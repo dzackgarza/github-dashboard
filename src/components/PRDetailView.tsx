@@ -166,14 +166,14 @@ export default function PRDetailView({
             className="px-3 py-1 bg-[#3c3c3c] text-white hover:bg-gray-700 transition-colors font-mono text-[11px] rounded flex items-center gap-1.5 shrink-0 cursor-pointer border border-[#3e3e3e]"
           >
             <ExternalLink size={12} />
-            Open GitHub
+            Open in GitHub
           </a>
         </div>
 
         <div className="flex flex-wrap items-center gap-4 mt-3 text-[11.5px] text-gray-400">
           <span className="px-3 py-1 text-xs font-bold font-sans rounded-full flex items-center gap-1.5 bg-purple-950/50 text-purple-400 border border-purple-900 leading-none">
             <GitPullRequest size={13} className="text-purple-400 animate-pulse shrink-0" />
-            Open PR PR
+            Open PR
           </span>
 
           <span className="flex items-center gap-1">
@@ -450,11 +450,11 @@ export default function PRDetailView({
                   </span>
                   <div className="bg-[#1b1b1c] p-2.5 rounded border border-gray-800/60 flex items-center justify-between text-xs font-mono">
                     <span className="text-purple-400 font-bold bg-[#131314] px-1.5 py-0.5 rounded">
-                      {prDetail?.base_branch || "main"}
+                      {prDetail?.base_branch}
                     </span>
                     <ArrowRight size={12} className="text-gray-500 shrink-0" />
                     <span className="text-blue-400 font-bold bg-[#131112] px-1.5 py-0.5 rounded">
-                      {prDetail?.head_branch || "patch-ui"}
+                      {prDetail?.head_branch}
                     </span>
                   </div>
                 </div>
@@ -523,23 +523,23 @@ export default function PRDetailView({
                 <div className="space-y-2 pb-3.5 border-b border-[#3e3e3e]">
                   <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
                     <ShieldAlert size={12} className="text-red-500" />
-                    <span>Security Vulnerabilities</span>
+                    <span>Security Alerts</span>
                   </span>
 
-                  {ciStatus.security_alerts_count > 0 || fullName === "garage-corp/internal-reporting" ? (
+                  {ciStatus.security_alerts_count > 0 ? (
                     <div className="p-2.5 bg-red-950/20 border border-red-900/60 rounded text-[11px] leading-snug text-red-300 space-y-1">
                       <div className="font-bold flex items-center gap-1">
                         <AlertTriangle size={11} className="text-red-400" />
-                        <span>Leaked credential keys alert!</span>
+                        <span>{ciStatus.security_alerts_count} security alerts</span>
                       </div>
                       <p className="text-gray-400">
-                        Audit scanned active secrets inline inside public assets folders. Rectify immediately.
+                        Review the repository security alerts in GitHub.
                       </p>
                     </div>
                   ) : (
                     <div className="bg-[#1b1b1c] p-2.5 rounded border border-[#3e3e3e]/40 text-center text-[10px] text-gray-500 font-mono">
                       <CheckCircle2 size={16} className="mx-auto text-emerald-500 mb-1" />
-                      No CVE alerts spot.
+                      No GitHub security alerts reported.
                     </div>
                   )}
                 </div>
@@ -548,7 +548,7 @@ export default function PRDetailView({
                 <div className="space-y-2">
                   <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
                     <Activity size={12} className="text-purple-400" />
-                    <span>Interactive Resolution checklist</span>
+                <span>Review Threads</span>
                   </span>
                   <div className="bg-[#1b1b1c] p-2.5 rounded border border-[#3e3e3e]/40 text-[10.5px] font-mono text-gray-400 space-y-2">
                     <div className="flex items-center gap-2">
@@ -557,7 +557,7 @@ export default function PRDetailView({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span>Review approvals valid</span>
+                      <span>Review state from GitHub checks</span>
                     </div>
                   </div>
                 </div>
@@ -565,8 +565,8 @@ export default function PRDetailView({
 
               {/* Sidebar bottom indicator */}
               <div className="text-[9.5px] font-mono text-gray-600 flex justify-between border-t border-[#3e3e3e]/40 pt-3 select-none">
-                <span>Active ETag delta polling</span>
-                <span>100% Secure</span>
+                <span>GitHub PR data</span>
+                <span>{ciStatus.state}</span>
               </div>
             </div>
           </Panel>

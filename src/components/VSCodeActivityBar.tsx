@@ -1,5 +1,5 @@
 import React from "react";
-import { FolderGit2, ShieldCheck, Settings, Database, CodeXml, Command } from "lucide-react";
+import { FolderGit2, ShieldCheck, Settings, CodeXml } from "lucide-react";
 
 interface VSCodeActivityBarProps {
   activeView: "explorer" | "sync" | "settings";
@@ -7,7 +7,6 @@ interface VSCodeActivityBarProps {
   isTokenConfigured: boolean;
   rateRemaining: number;
   sidebarOpen?: boolean;
-  onOpenCommandPalette?: () => void;
 }
 
 export default function VSCodeActivityBar({
@@ -15,8 +14,7 @@ export default function VSCodeActivityBar({
   setActiveView,
   isTokenConfigured,
   rateRemaining,
-  sidebarOpen = true,
-  onOpenCommandPalette
+  sidebarOpen = true
 }: VSCodeActivityBarProps) {
   return (
     <div className="w-[48px] h-full bg-[#333333] flex flex-col items-center justify-between py-4 select-none border-r border-[#3e3e3e]">
@@ -43,38 +41,6 @@ export default function VSCodeActivityBar({
           </span>
         </button>
 
-        {/* View Toggle - Sync Tracker */}
-        <button
-          onClick={() => setActiveView("sync")}
-          className={`relative p-2.5 w-full flex justify-center transition-colors group cursor-pointer ${
-            activeView === "sync" && sidebarOpen
-              ? "text-white border-l-2 border-[#007acc]"
-              : "text-gray-400 hover:text-gray-200"
-          }`}
-          title="Sync Status & Telemetry"
-        >
-          <div className="relative">
-            <Database size={22} />
-            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-          <span className="absolute left-14 bg-gray-800 text-xs px-2 py-1 rounded text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap shadow-md">
-            Sync Telemetry & Rate Limits
-          </span>
-        </button>
-
-        {/* Command Palette Button */}
-        {onOpenCommandPalette && (
-          <button
-            onClick={onOpenCommandPalette}
-            className="relative p-2.5 w-full flex justify-center transition-colors group text-gray-400 hover:text-[#007acc] cursor-pointer"
-            title="Open Command Palette (Ctrl+P)"
-          >
-            <Command size={22} />
-            <span className="absolute left-14 bg-gray-800 text-xs px-2 py-1 rounded text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none whitespace-nowrap shadow-md">
-              Command Palette (Ctrl+P)
-            </span>
-          </button>
-        )}
       </div>
 
       {/* Bottom Icons */}

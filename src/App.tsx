@@ -176,6 +176,7 @@ export default function App() {
   const [syncTimestamps, setSyncTimestamps] = useState<Record<string, string>>({});
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("all");
+  const [activeRepoFullName, setActiveRepoFullName] = useState<string | null>(null);
 
   // Auth / verification states
   const [isTokenConfigured, setIsTokenConfigured] = useState(false);
@@ -224,8 +225,8 @@ export default function App() {
       // 2) Load core repos list
       await fetchRepos();
 
-      // 3) Pull active sync-telemetry logs & limits
-      await refreshTelemetryAndLimits();
+      // 3) Pull developer sync logs & limits
+      await refreshSyncDiagnostics();
     } catch (err) {
       console.error("Workspace boot process error", err);
     }
@@ -239,27 +240,7 @@ export default function App() {
         setRepos(data.repos);
       }
       
-      // Resilient local storage sync to survive stateless container restarts
-      let tags = data.projectTags || [];
-      const cachedTagsStr = localStorage.getItem("github_project_tags");
-      if (cachedTagsStr) {
-        try {
-          const cachedTags = JSON.parse(cachedTagsStr);
-          if (tags.length === 0 && Array.isArray(cachedTags) && cachedTags.length > 0) {
-            tags = cachedTags;
-            // Sync client-side tags back to server
-            await fetch("/api/github/projects", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tags })
-            });
-          }
-        } catch (e) {
-          console.error("Local storage corruption", e);
-        }
-      }
-      setProjectTags(tags);
-      localStorage.setItem("github_project_tags", JSON.stringify(tags));
+      setProjectTags(data.projectTags);
 
       if (data.syncTimestamps) {
         setSyncTimestamps(data.syncTimestamps);
@@ -272,7 +253,7 @@ export default function App() {
     }
   };
 
-  const refreshTelemetryAndLimits = async () => {
+  const refreshSyncDiagnostics = async () => {
     try {
       const logsRes = await fetch("/api/github/sync-logs");
       const logs = await logsRes.json();
@@ -282,7 +263,7 @@ export default function App() {
       const limit = await limitsRes.json();
       setRateLimit(limit);
     } catch (err) {
-      console.error("Error refreshing telemetry and rate limits", err);
+      console.error("Error refreshing sync diagnostics and rate limits", err);
     }
   };
 
@@ -303,7 +284,7 @@ export default function App() {
       console.error("Single sync trigger failure", err);
     } finally {
       setIsSyncing((prev) => ({ ...prev, [fullName]: false }));
-      await refreshTelemetryAndLimits();
+      await refreshSyncDiagnostics();
     }
   };
 
@@ -359,6 +340,17 @@ export default function App() {
     }
   };
 
+  const handleOpenRepo = (repoFullName: string) => {
+    setActiveRepoFullName(repoFullName);
+    handleOpenTab("explorer", "welcome", "Repositories");
+  };
+
+  const handleOpenProject = (projectId: string) => {
+    setSelectedProjectFilter(projectId);
+    setActiveRepoFullName(null);
+    handleOpenTab("explorer", "welcome", "Repositories");
+  };
+
   // Metadata project tag assigning
   const handleAddProjectTag = async (tagName: string, repoFullName: string) => {
     const updatedTags = projectTags.map((tag) => {
@@ -381,8 +373,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setProjectTags(data.projectTags);
-        localStorage.setItem("github_project_tags", JSON.stringify(data.projectTags));
-        await refreshTelemetryAndLimits();
+        await refreshSyncDiagnostics();
       }
     } catch (e) {
       console.error("Metadata tag setting error", e);
@@ -409,8 +400,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setProjectTags(data.projectTags);
-        localStorage.setItem("github_project_tags", JSON.stringify(data.projectTags));
-        await refreshTelemetryAndLimits();
+        await refreshSyncDiagnostics();
       }
     } catch (e) {
       console.error("Removing repo tag mapping fail", e);
@@ -436,8 +426,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setProjectTags(data.projectTags);
-        localStorage.setItem("github_project_tags", JSON.stringify(data.projectTags));
-        await refreshTelemetryAndLimits();
+        await refreshSyncDiagnostics();
       }
     } catch (err) {
       console.error("Failed creating tag folder category", err);
@@ -459,8 +448,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setProjectTags(data.projectTags);
-        localStorage.setItem("github_project_tags", JSON.stringify(data.projectTags));
-        await refreshTelemetryAndLimits();
+        await refreshSyncDiagnostics();
       }
     } catch (err) {
       console.error("Failed destroying tag tag structure", err);
@@ -470,7 +458,7 @@ export default function App() {
   // Update tabs callback to trigger reloading active items when comment adds
   const handleRefreshActiveItem = async () => {
     await fetchRepos();
-    await refreshTelemetryAndLimits();
+    await refreshSyncDiagnostics();
 
     if (activeIssue) {
       const res = await fetch(`/api/github/repos/${activeIssue.owner}/${activeIssue.repo}/issues`);
@@ -546,7 +534,10 @@ export default function App() {
     githubUser,
     isSyncingGlobal,
     selectedProjectFilter,
+    activeRepoFullName,
     setSelectedProjectFilter,
+    openRepo: handleOpenRepo,
+    openProject: handleOpenProject,
     onForceSync: handleForceSyncRepo,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
@@ -565,6 +556,7 @@ export default function App() {
     githubUser,
     isSyncingGlobal,
     selectedProjectFilter,
+    activeRepoFullName,
   ]);
 
   return (
@@ -580,7 +572,6 @@ export default function App() {
           isTokenConfigured={isTokenConfigured}
           rateRemaining={rateLimit.remaining}
           sidebarOpen={sidebarOpen}
-          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         />
 
         {/* 1.2 VSCode Left Sidebar - Fixed size outside custom dockview grid */}

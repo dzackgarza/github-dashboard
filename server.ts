@@ -13,7 +13,7 @@ const app = express();
 const PORT = 3002;
 app.use(express.json());
 
-// Path to persist custom data (groups, cache override, etc.)
+// Path to persist project grouping data.
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
@@ -41,37 +41,43 @@ interface ProjectTag {
 
 interface DBState {
   projectTags: ProjectTag[];
-  repoPriorities: Record<string, "high" | "medium" | "low" | null>; // issue/PR number-to-priority
-  customLabels: Record<string, string[]>; // repo:number -> labels
 }
 
-// Default Seed State
 let dbState: DBState = {
   projectTags: [],
-  repoPriorities: {},
-  customLabels: {}
 };
 
-// Safe DB loader
+function assertProjectTag(value: unknown): asserts value is ProjectTag {
+  assert(value && typeof value === "object", "Project entry must be an object.");
+  const tag = value as ProjectTag;
+  assert(typeof tag.id === "string" && tag.id.length > 0, "Project id is required.");
+  assert(typeof tag.name === "string" && tag.name.length > 0, "Project name is required.");
+  assert(typeof tag.color === "string" && tag.color.length > 0, "Project color is required.");
+  assert(Array.isArray(tag.repos), "Project repos must be an array.");
+  tag.repos.forEach((repoName) => {
+    assert(typeof repoName === "string" && repoName.includes("/"), "Project repo entries must be full repository names.");
+  });
+}
+
+function parseDBState(raw: unknown): DBState {
+  assert(raw && typeof raw === "object", "db.json must contain an object.");
+  const state = raw as DBState;
+  assert(Array.isArray(state.projectTags), "db.json projectTags must be an array.");
+  state.projectTags.forEach(assertProjectTag);
+  return { projectTags: state.projectTags };
+}
+
 function loadDB() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const content = fs.readFileSync(DB_FILE, "utf-8");
-      dbState = JSON.parse(content);
-    } else {
-      saveDB();
-    }
-  } catch (err) {
-    console.error("Error loading DB file, using defaults:", err);
+  if (fs.existsSync(DB_FILE)) {
+    const content = fs.readFileSync(DB_FILE, "utf-8");
+    dbState = parseDBState(JSON.parse(content));
+    return;
   }
+  saveDB();
 }
 
 function saveDB() {
-  try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(dbState, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error writing DB file:", err);
-  }
+  fs.writeFileSync(DB_FILE, JSON.stringify(parseDBState(dbState), null, 2), "utf-8");
 }
 
 loadDB();
@@ -237,7 +243,7 @@ app.post("/api/github/repos/:owner/:repo/sync", async (req, res) => {
   const cacheKeyPrs = `prs-${fullName}`;
 
   try {
-    const issueRes = await githubFetch(`/repos/${fullName}/issues?state=all&per_page=30`, cacheKeyIssues);
+    const issueRes = await githubFetch(`/repos/${fullName}/issues?state=open&per_page=30`, cacheKeyIssues);
     if (issueRes.status === 200 && issueRes.data) {
       serverRepoCache[cacheKeyIssues] = {
         etag: issueRes.headers.get("etag") || "",
@@ -249,7 +255,7 @@ app.post("/api/github/repos/:owner/:repo/sync", async (req, res) => {
       addLog(fullName, "304_HIT", `Issues delta check: returned 304 Not Modified. Rate cost saved.`);
     }
 
-    const prsRes = await githubFetch(`/repos/${fullName}/pulls?state=all&per_page=30`, cacheKeyPrs);
+    const prsRes = await githubFetch(`/repos/${fullName}/pulls?state=open&per_page=30`, cacheKeyPrs);
     if (prsRes.status === 200 && prsRes.data) {
       serverRepoCache[cacheKeyPrs] = {
         etag: prsRes.headers.get("etag") || "",
@@ -281,7 +287,7 @@ app.get("/api/github/repos/:owner/:repo/issues", async (req, res) => {
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/issues?state=all&per_page=50`, cacheKey);
+    const { data, status, headers } = await githubFetch(`/repos/${fullName}/issues?state=open&per_page=50`, cacheKey);
     let finalIssues = [];
 
     if (status === 304 && cached) {
@@ -303,14 +309,7 @@ app.get("/api/github/repos/:owner/:repo/issues", async (req, res) => {
     // Filter out PR structures (GitHub API returns PRs inside issues endpoint)
     const issuesOnly = finalIssues.filter((i: any) => !i.pull_request);
 
-    // Merge database configurations
-    const enriched = issuesOnly.map((issue: any) => ({
-      ...issue,
-      priority: dbState.repoPriorities[`${fullName}:${issue.number}`] || null,
-      customLabels: dbState.customLabels[`${fullName}:${issue.number}`] || []
-    }));
-
-    return res.json(enriched);
+    return res.json(issuesOnly);
 
   } catch (err: any) {
     addLog(fullName, "ERROR", `Failed to retrieve issues: ${err.message}`);
@@ -327,7 +326,7 @@ app.get("/api/github/repos/:owner/:repo/prs", async (req, res) => {
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/pulls?state=all&per_page=50`, cacheKey);
+    const { data, status, headers } = await githubFetch(`/repos/${fullName}/pulls?state=open&per_page=50`, cacheKey);
     let finalPrs = [];
 
     if (status === 304 && cached) {
@@ -346,13 +345,7 @@ app.get("/api/github/repos/:owner/:repo/prs", async (req, res) => {
       return res.status(status).json({ error: `GitHub pull requests request failed with status ${status}.` });
     }
 
-    const enriched = finalPrs.map((pr: any) => ({
-      ...pr,
-      priority: dbState.repoPriorities[`${fullName}:${pr.number}`] || null,
-      customLabels: dbState.customLabels[`${fullName}:${pr.number}`] || []
-    }));
-
-    return res.json(enriched);
+    return res.json(finalPrs);
   } catch (err: any) {
     addLog(fullName, "ERROR", `Failed to retrieve PRs: ${err.message}`);
     return res.status(500).json({ error: "GitHub pull requests request failed." });
@@ -521,6 +514,9 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
       html_url: prDetailsRes.data.html_url,
       user: prDetailsRes.data.user,
       created_at: prDetailsRes.data.created_at,
+      updated_at: prDetailsRes.data.updated_at,
+      base_branch: prDetailsRes.data.base.ref,
+      head_branch: prDetailsRes.data.head.ref,
       diff: liveFiles,
       ci_status: {
         state: state === "success" ? "success" : state === "failure" ? "failure" : "pending",
@@ -536,32 +532,6 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
   }
 });
 
-// METADATA management: UPDATE Issue prioritization state or custom label associations
-app.post("/api/github/repos/:owner/:repo/issues/:number/metadata", (req, res) => {
-  const { owner, repo, number } = req.params;
-  const fullName = `${owner}/${repo}`;
-  const { priority, customLabels } = req.body;
-
-  const priorityKey = `${fullName}:${number}`;
-
-  if (priority !== undefined) {
-    dbState.repoPriorities[priorityKey] = priority;
-    addLog(fullName, "INFO", `Set item #${number} priority priority to '${priority}'.`);
-  }
-
-  if (customLabels !== undefined) {
-    dbState.customLabels[priorityKey] = customLabels;
-    addLog(fullName, "INFO", `Updated custom label list for item #${number}.`);
-  }
-
-  saveDB();
-  return res.json({
-    success: true,
-    priority: dbState.repoPriorities[priorityKey] || null,
-    customLabels: dbState.customLabels[priorityKey] || []
-  });
-});
-
 // UPDATE project tags
 app.get("/api/github/projects", (req, res) => {
   res.json(dbState.projectTags);
@@ -569,13 +539,12 @@ app.get("/api/github/projects", (req, res) => {
 
 app.post("/api/github/projects", (req, res) => {
   const { tags } = req.body;
-  if (Array.isArray(tags)) {
-    dbState.projectTags = tags;
-    saveDB();
-    addLog("Projects Registry", "SUCCESS", "Project structure and repository tags mapped correctly.");
-    return res.json({ success: true, projectTags: dbState.projectTags });
-  }
-  return res.status(400).json({ error: "Invalid layout array provided." });
+  assert(Array.isArray(tags), "Project update requires a tags array.");
+  tags.forEach(assertProjectTag);
+  dbState.projectTags = tags;
+  saveDB();
+  addLog("Projects", "SUCCESS", "Project repository groups updated.");
+  return res.json({ success: true, projectTags: dbState.projectTags });
 });
 
 // GET Rate Limit Status directly

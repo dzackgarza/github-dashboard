@@ -12,7 +12,10 @@ export interface WorkspaceContextType {
   githubUser: any;
   isSyncingGlobal: boolean;
   selectedProjectFilter: string;
+  activeRepoFullName: string | null;
   setSelectedProjectFilter: (filter: string) => void;
+  openRepo: (repoFullName: string) => void;
+  openProject: (projectId: string) => void;
   onForceSync: (owner: string, repo: string) => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;

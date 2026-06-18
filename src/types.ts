@@ -38,10 +38,9 @@ export interface Issue {
   html_url: string;
   user: User;
   created_at: string;
-  comments?: Comment[];
+  updated_at: string;
+  comments?: number | Comment[];
   labels: Label[];
-  priority?: "high" | "medium" | "low" | null;
-  customLabels?: string[];
 }
 
 export interface DiffFile {
@@ -75,12 +74,11 @@ export interface PullRequest {
   html_url: string;
   user: User;
   created_at: string;
-  comments?: Comment[];
+  updated_at: string;
+  comments?: number | Comment[];
   labels: Label[];
   diff?: DiffFile[];
   ci_status?: CIStatus;
-  priority?: "high" | "medium" | "low" | null;
-  customLabels?: string[];
   base_branch?: string;
   head_branch?: string;
 }

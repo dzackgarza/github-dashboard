@@ -98,8 +98,8 @@ export default function CommandPalette({
   const baseCommands: PaletteCommand[] = [
     {
       id: "refresh",
-      title: "Refresh Workspace",
-      subtitle: "Re-fetches and triggers incremental sync checks using cached ETags",
+      title: "Sync with GitHub",
+      subtitle: "Refresh repositories, open issues, and open pull requests",
       category: "System",
       shortcut: "R",
       action: () => {
@@ -110,7 +110,7 @@ export default function CommandPalette({
     {
       id: "toggle-sidebar",
       title: "Toggle Explorer Sidebar",
-      subtitle: "Show or hide the VSCode Left Navigator pane",
+      subtitle: "Show or hide repository navigation",
       category: "View",
       shortcut: "Ctrl+B",
       action: () => {
@@ -120,8 +120,8 @@ export default function CommandPalette({
     },
     {
       id: "welcome-dashboard",
-      title: "View Welcome Dashboard",
-      subtitle: "Open the central telemetry status page and overview metrics",
+      title: "View Dashboard",
+      subtitle: "Open the GitHub work dashboard",
       category: "View",
       action: () => {
         openTabs("welcome", "welcome", "Welcome Dashboard");
@@ -130,8 +130,8 @@ export default function CommandPalette({
     },
     {
       id: "full-explorer",
-      title: "Launch Full-Pane Explorer",
-      subtitle: "Open Repository bento index and tagging workbench",
+      title: "Open Repositories",
+      subtitle: "Open the repository browser",
       category: "View",
       action: () => {
         onToggleExplorer();
@@ -140,8 +140,8 @@ export default function CommandPalette({
     },
     {
       id: "create-tag-trigger",
-      title: "Create New Project Tag...",
-      subtitle: "Establish a category to group repositories in layouts",
+      title: "Create Project...",
+      subtitle: "Create a repository group",
       category: "Tags",
       action: () => {
         setSubMode("create-tag");
@@ -151,8 +151,8 @@ export default function CommandPalette({
     },
     {
       id: "select-filter-trigger",
-      title: "Filter Workspace by Tag...",
-      subtitle: "Limit views to a single tagged group of repos",
+      title: "Filter by Project...",
+      subtitle: "Limit views to a project",
       category: "Tags",
       action: () => {
         setSubMode("select-filter");
@@ -162,8 +162,8 @@ export default function CommandPalette({
     },
     {
       id: "delete-tag-trigger",
-      title: "Delete Project Tag...",
-      subtitle: "Remove a category completely (does not delete repos)",
+      title: "Delete Project...",
+      subtitle: "Remove a repository group",
       category: "Tags",
       action: () => {
         setSubMode("delete-tag");
@@ -173,8 +173,8 @@ export default function CommandPalette({
     },
     {
       id: "switch-sidebar-explorer",
-      title: "Sidebar: Show Explorer Tree",
-      subtitle: "Toggle sidebar navigation to repository directory files",
+      title: "Sidebar: Show Repositories",
+      subtitle: "Show repository navigation",
       category: "Sidebar",
       action: () => {
         onSwitchSidebarView("explorer");
@@ -183,8 +183,8 @@ export default function CommandPalette({
     },
     {
       id: "switch-sidebar-sync",
-      title: "Sidebar: Show Sync Transact Logs",
-      subtitle: "View the real cache headers and rate limit tracking telemetry",
+      title: "Developer: Show Sync Log",
+      subtitle: "View cache headers, sync log entries, and rate limits",
       category: "Sidebar",
       action: () => {
         onSwitchSidebarView("sync");
@@ -193,8 +193,8 @@ export default function CommandPalette({
     },
     {
       id: "switch-sidebar-settings",
-      title: "Sidebar: Show Settings Config",
-      subtitle: "Configure credentials or personal GitHub access token credentials",
+      title: "Sidebar: Show Settings",
+      subtitle: "View GitHub token configuration",
       category: "Sidebar",
       action: () => {
         onSwitchSidebarView("settings");
