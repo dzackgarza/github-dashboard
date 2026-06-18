@@ -6,3 +6,4 @@ build:
 
 test:
     npm run lint
+    npm run test:e2e
