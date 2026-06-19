@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const port = process.env.PORT;
+if (typeof port !== "string" || port.trim().length === 0) {
+  throw new Error("PORT is required for Playwright configuration.");
+}
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 120_000,
@@ -7,12 +13,12 @@ export default defineConfig({
     timeout: 15_000,
   },
   use: {
-    baseURL: "http://127.0.0.1:3002",
+    baseURL,
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "direnv exec . env PORT=3002 STATIC_DIST_DIR=./dist npm run dev",
-    url: "http://127.0.0.1:3002",
+    command: "direnv exec . npm run dev",
+    url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
   },

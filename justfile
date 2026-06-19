@@ -1,5 +1,5 @@
 dev:
-    PORT=3002 STATIC_DIST_DIR=./dist npm run dev
+    direnv exec . npm run dev
 
 build:
     npm run build
