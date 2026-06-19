@@ -28,6 +28,7 @@ export interface Repo {
   language: string;
   owner: User;
   updated_at: string;
+  topics: string[];
   open_issues_count?: number;
 }
 
@@ -60,11 +61,18 @@ export interface CIRun {
   logs?: string;
 }
 
+export interface SecurityAlerts {
+  dependabotOpen: number;
+  codeScanningOpen: number;
+  secretScanningOpen: number;
+  totalOpen: number;
+}
+
 export interface CIStatus {
   state: "success" | "failure" | "pending";
   runs: CIRun[];
   unresolved_threads_count: number;
-  security_alerts_count: number;
+  security_alerts: SecurityAlerts;
 }
 
 export interface PullRequest {

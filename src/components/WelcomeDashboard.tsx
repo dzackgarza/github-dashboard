@@ -14,7 +14,8 @@ import {
   FolderOpen
 } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { Issue, PullRequest, Repo } from "../types";
+import { Issue, PullRequest, Repo, Label } from "../types";
+import { invariant } from "../utils/invariant";
 
 type InboxActivityItem = (Issue | PullRequest) & {
   repoName: string;
@@ -31,10 +32,8 @@ interface InboxCachePayload {
 
 const INBOX_CACHE_PREFIX = "github_dashboard_inbox_cache";
 
-function invariant(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
+function getInboxItemTestId(item: InboxActivityItem): string {
+  return `inbox-item-${item.type}-${item.repoFullName.replace(/\//g, "-")}-${item.number}`;
 }
 
 function getInboxCacheKey(login: string) {
@@ -144,19 +143,16 @@ export default function WelcomeDashboard() {
           // 1. Fetch issues
           const issuesRes = await fetch(`/api/github/repos/${owner}/${name}/issues`);
           if (issuesRes.ok) {
-            const issuesData = await issuesRes.json();
+              const issuesData = await issuesRes.json();
             if (Array.isArray(issuesData)) {
-              issuesData.forEach((issue: any) => {
-                // Skip PR items that GitHub returns as issues
-                if (!issue.pull_request) {
-                  accumIssues.push({
-                    ...issue,
-                    repoName: repo.name,
-                    repoFullName: repo.full_name,
-                    compositeId: `issue-${repo.full_name}-${issue.number}`,
-                    type: "issue"
-                  } as InboxActivityItem);
-                }
+              issuesData.forEach((issue: Issue) => {
+                accumIssues.push({
+                  ...issue,
+                  repoName: repo.name,
+                  repoFullName: repo.full_name,
+                  compositeId: `issue-${repo.full_name}-${issue.number}`,
+                  type: "issue"
+                });
               });
             }
           }
@@ -164,9 +160,9 @@ export default function WelcomeDashboard() {
           // 2. Fetch PRs
           const prsRes = await fetch(`/api/github/repos/${owner}/${name}/prs`);
           if (prsRes.ok) {
-            const prsData = await prsRes.json();
+          const prsData = await prsRes.json();
             if (Array.isArray(prsData)) {
-              prsData.forEach((pr: any) => {
+              prsData.forEach((pr: PullRequest) => {
                 accumPRs.push({
                   ...pr,
                   repoName: repo.name,
@@ -437,6 +433,7 @@ export default function WelcomeDashboard() {
                     return (
                       <div
                         key={item.compositeId}
+                        data-testid={getInboxItemTestId(item)}
                         onClick={() => openTabs(item.compositeId, item.type, `#${item.number}: ${item.title}`, item.repoFullName.split('/')[0], item.repoName, item.number)}
                         className="p-3.5 hover:bg-[#252528] transition-colors flex items-start justify-between gap-3 group cursor-pointer"
                       >
@@ -486,7 +483,7 @@ export default function WelcomeDashboard() {
                                 <>
                                   <span>•</span>
                                   <div className="flex gap-1 select-none">
-                                    {item.labels.slice(0, 2).map((lbl: any) => (
+                                    {item.labels.slice(0, 2).map((lbl: Label) => (
                                       <span
                                         key={lbl.name}
                                         className="text-[9px] px-1 py-0.2 rounded font-mono"

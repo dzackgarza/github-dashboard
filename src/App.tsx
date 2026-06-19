@@ -8,10 +8,18 @@ import IssueDetailView from "./components/IssueDetailView";
 import PRDetailView from "./components/PRDetailView";
 import CommandPalette from "./components/CommandPalette";
 import { WorkspaceContext } from "./context/WorkspaceContext";
-import { Repo, ProjectTag, SyncLog, RateLimit, Tab, Issue, PullRequest } from "./types";
+import { Repo, ProjectTag, SyncLog, RateLimit, Tab, Issue, PullRequest, User } from "./types";
 import { DockviewReact, DockviewReadyEvent, IDockviewPanelProps, DockviewApi } from "dockview";
+import { deriveProjectTagsFromWorkspaceRepos, normalizeProjectTopicName } from "./utils/projectTopics";
 
 type ProjectMutationStatus = "queued" | "saving" | "saved" | "error";
+
+type DockPanelParams = {
+  owner?: string;
+  repoName?: string;
+  number?: number;
+  data?: Issue | PullRequest;
+};
 
 interface ProjectMutationNotification {
   id: string;
@@ -20,38 +28,50 @@ interface ProjectMutationNotification {
   detail: string;
 }
 
-interface QueuedProjectMutation {
-  id: string;
-  label: string;
-  computeNextTags: (currentTags: ProjectTag[]) => ProjectTag[];
-}
-
-function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: any }>) {
-  const [issue, setIssue] = useState<any>(params.data);
-  const [loading, setLoading] = useState(!params.data);
+function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: Issue }>) {
+  const [issue, setIssue] = useState<Issue | null>(params.data ?? null);
+  const hasParams = Boolean(params.owner && params.repoName && params.number);
+  const [loading, setLoading] = useState(hasParams && !params.data);
 
   useEffect(() => {
     let active = true;
-    if (!issue && params.owner && params.repoName && params.number) {
-      setLoading(true);
-      fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues`)
-        .then((r) => r.json())
-        .then((issues) => {
-          if (!active) return;
-          const match = issues.find((i: any) => i.number === params.number);
-          if (match) {
-            setIssue(match);
-            api.updateParameters({ data: match });
-          }
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
+    if (!hasParams) {
+      setLoading(false);
+      return;
     }
+
+    setLoading(true);
+    fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues/${params.number}`)
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`Issue endpoint failed with ${r.status}`);
+        }
+        return r.json() as Promise<Issue>;
+      })
+      .then((data: Issue) => {
+        if (!active) return;
+        setIssue(data);
+        api.updateParameters({ data });
+      })
+      .catch((err) => {
+        console.error("Failed to load issue summary", err);
+        setIssue(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, [params.owner, params.repoName, params.number, issue, api]);
+  }, [params.owner, params.repoName, params.number, hasParams, api]);
+
+  if (!hasParams) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-gray-500 bg-[#1e1e1e]">
+        Issue panel parameters are incomplete.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -76,44 +96,70 @@ function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: str
       repoName={params.repoName!}
       issue={issue}
       onRefreshItem={async () => {
-        const res = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues`);
-        const issues = await res.json();
-        const match = issues.find((i: any) => i.number === params.number);
-        if (match) {
-          setIssue(match);
-          api.updateParameters({ data: match });
+        if (!params.owner || !params.repoName || !params.number) {
+          return;
+        }
+
+        try {
+          const res = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues/${params.number}`);
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json() as Issue;
+          setIssue(data);
+          api.updateParameters({ data });
+        } catch (err) {
+          console.error("Failed to refresh issue summary", err);
         }
       }}
     />
   );
 }
 
-function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: any }>) {
-  const [pr, setPr] = useState<any>(params.data);
-  const [loading, setLoading] = useState(!params.data);
+function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: PullRequest }>) {
+  const [pr, setPr] = useState<PullRequest | null>(params.data ?? null);
+  const hasParams = Boolean(params.owner && params.repoName && params.number);
+  const [loading, setLoading] = useState(hasParams && !params.data);
 
   useEffect(() => {
     let active = true;
-    if (!pr && params.owner && params.repoName && params.number) {
-      setLoading(true);
-      fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs`)
-        .then((r) => r.json())
-        .then((prs) => {
-          if (!active) return;
-          const match = prs.find((p: any) => p.number === params.number);
-          if (match) {
-            setPr(match);
-            api.updateParameters({ data: match });
-          }
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
+    if (!hasParams) {
+      setLoading(false);
+      return;
     }
+
+    setLoading(true);
+    fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs/${params.number}`)
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error(`PR endpoint failed with ${r.status}`);
+        }
+        return r.json() as Promise<PullRequest>;
+      })
+      .then((data: PullRequest) => {
+        if (!active) return;
+        setPr(data);
+        api.updateParameters({ data });
+      })
+      .catch((err) => {
+        console.error("Failed to load PR summary", err);
+        setPr(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
-  }, [params.owner, params.repoName, params.number, pr, api]);
+  }, [params.owner, params.repoName, params.number, hasParams, api]);
+
+  if (!hasParams) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-gray-500 bg-[#1e1e1e]">
+        Pull request panel parameters are incomplete.
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -138,13 +184,17 @@ function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string
       repoName={params.repoName!}
       pr={pr}
       onRefreshItem={async () => {
-        const res = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs`);
-        const prs = await res.json();
-        const match = prs.find((p: any) => p.number === params.number);
-        if (match) {
-          setPr(match);
-          api.updateParameters({ data: match });
+        if (!params.owner || !params.repoName || !params.number) {
+          return;
         }
+
+        const res = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs/${params.number}`);
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json() as PullRequest;
+        setPr(data);
+        api.updateParameters({ data });
       }}
     />
   );
@@ -171,9 +221,6 @@ export default function App() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
   const projectTagsRef = useRef<ProjectTag[]>([]);
-  const projectMutationQueueRef = useRef<QueuedProjectMutation[]>([]);
-  const projectMutationFlushActiveRef = useRef(false);
-  const projectMutationFlushTimerRef = useRef<number | null>(null);
   const [projectMutationNotifications, setProjectMutationNotifications] = useState<ProjectMutationNotification[]>([]);
   const [syncTimestamps, setSyncTimestamps] = useState<Record<string, string>>({});
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
@@ -183,7 +230,7 @@ export default function App() {
 
   // Auth / verification states
   const [isTokenConfigured, setIsTokenConfigured] = useState(false);
-  const [githubUser, setGithubUser] = useState<any | null>(null);
+  const [githubUser, setGithubUser] = useState<User | null>(null);
   const [rateLimit, setRateLimit] = useState<RateLimit>({ limit: 60, remaining: 60, reset: 0 });
 
   // Sync actions terminal log items
@@ -245,9 +292,8 @@ export default function App() {
       const data = await res.json();
       if (data.repos) {
         setRepos(data.repos);
+        setProjectTags(deriveProjectTagsFromWorkspaceRepos(data.repos));
       }
-      
-      setProjectTags(data.projectTags);
 
       if (data.syncTimestamps) {
         setSyncTimestamps(data.syncTimestamps);
@@ -377,89 +423,60 @@ export default function App() {
     setProjectMutationNotifications((current) => current.filter((item) => item.id !== id));
   };
 
-  const flushProjectMutations = async () => {
-    if (projectMutationFlushActiveRef.current || projectMutationQueueRef.current.length === 0) {
-      return;
-    }
-
-    projectMutationFlushActiveRef.current = true;
-    const batch = projectMutationQueueRef.current.splice(0);
-    batch.forEach((mutation) => updateProjectNotification(mutation.id, { status: "saving", detail: "Saving" }));
-
-    try {
-      const updatedTags = batch.reduce(
-        (currentTags, mutation) => mutation.computeNextTags(currentTags),
-        projectTagsRef.current
-      );
-      const res = await fetch("/api/github/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags })
-      });
-      if (!res.ok) {
-        throw new Error(`Project update failed with HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const canonicalTags = data.projectTags as ProjectTag[];
-      projectTagsRef.current = canonicalTags;
-      setProjectTags(canonicalTags);
-      void refreshSyncDiagnostics();
-      batch.forEach((mutation) => {
-        updateProjectNotification(mutation.id, { status: "saved", detail: "Saved" });
-        window.setTimeout(() => removeProjectNotification(mutation.id), 1800);
-      });
-    } catch (error) {
-      batch.forEach((mutation) => {
-        updateProjectNotification(mutation.id, {
-          status: "error",
-          detail: error instanceof Error ? error.message : "Project update failed"
-        });
-      });
-    } finally {
-      projectMutationFlushActiveRef.current = false;
-      if (projectMutationQueueRef.current.length > 0) {
-        scheduleProjectMutationFlush();
-      }
-    }
-  };
-
-  const scheduleProjectMutationFlush = () => {
-    if (projectMutationFlushTimerRef.current !== null || projectMutationFlushActiveRef.current) {
-      return;
-    }
-    projectMutationFlushTimerRef.current = window.setTimeout(() => {
-      projectMutationFlushTimerRef.current = null;
-      void flushProjectMutations();
-    }, 100);
-  };
-
-  const enqueueProjectMutation = (
-    label: string,
-    computeNextTags: (currentTags: ProjectTag[]) => ProjectTag[]
-  ) => {
+  const runProjectMutation = async (label: string, execute: () => Promise<void>) => {
     const id = crypto.randomUUID();
-    projectMutationQueueRef.current.push({ id, label, computeNextTags });
     setProjectMutationNotifications((current) => [
       ...current,
       { id, label, status: "queued", detail: "Queued" }
     ]);
-    scheduleProjectMutationFlush();
+    updateProjectNotification(id, { status: "saving", detail: "Saving" });
+
+    try {
+      await execute();
+      updateProjectNotification(id, { status: "saved", detail: "Saved" });
+      window.setTimeout(() => removeProjectNotification(id), 1800);
+    } catch (error) {
+      updateProjectNotification(id, {
+        status: "error",
+        detail: error instanceof Error ? error.message : "Project update failed"
+      });
+    }
+  };
+
+  const replaceRepoTopics = async (repoFullName: string, nextTopics: string[]) => {
+    const repo = repos.find((item) => item.full_name === repoFullName);
+    if (!repo) {
+      throw new Error(`Repository ${repoFullName} was not found.`);
+    }
+
+    const res = await fetch(`/api/github/repos/${repo.owner.login}/${repo.name}/topics`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topics: nextTopics })
+    });
+    if (!res.ok) {
+      throw new Error(`Topic update failed with HTTP ${res.status}`);
+    }
+
+    await res.json() as { topics: string[] };
+    await fetchRepos();
+    await refreshSyncDiagnostics();
   };
 
   // Metadata project tag assigning
   const handleAddProjectTag = (tagName: string, repoFullName: string) => {
-    enqueueProjectMutation(`Add ${repoFullName} to ${tagName}`, (currentTags) =>
-      currentTags.map((tag) => {
-        if (tag.name === tagName) {
-          const alreadyHas = tag.repos.includes(repoFullName);
-          return {
-            ...tag,
-            repos: alreadyHas ? tag.repos : [...tag.repos, repoFullName]
-          };
-        }
-        return tag;
-      })
-    );
+    const repo = repos.find((item) => item.full_name === repoFullName);
+    if (!repo) {
+      throw new Error(`Repository ${repoFullName} was not found.`);
+    }
+    const topic = normalizeProjectTopicName(tagName);
+    if (repo.topics.includes(topic)) {
+      return;
+    }
+
+    void runProjectMutation(`Add ${repoFullName} to ${topic}`, async () => {
+      await replaceRepoTopics(repoFullName, [...repo.topics, topic].sort((left, right) => left.localeCompare(right)));
+    });
   };
 
   const handleRemoveRepoFromTag = (tagId: string, repoFullName: string) => {
@@ -467,42 +484,19 @@ export default function App() {
     if (!tag) {
       throw new Error(`Project ${tagId} was not found.`);
     }
-    enqueueProjectMutation(`Remove ${repoFullName} from ${tag.name}`, (currentTags) =>
-      currentTags.map((tag) => {
-        if (tag.id === tagId) {
-          return {
-            ...tag,
-            repos: tag.repos.filter((r) => r !== repoFullName)
-          };
-        }
-        return tag;
-      })
-    );
+    const repo = repos.find((item) => item.full_name === repoFullName);
+    if (!repo) {
+      throw new Error(`Repository ${repoFullName} was not found.`);
+    }
+
+    void runProjectMutation(`Remove ${repoFullName} from ${tag.name}`, async () => {
+      await replaceRepoTopics(repoFullName, repo.topics.filter((topic) => topic !== tag.id));
+    });
   };
 
-  // Project creation and deletion are command-palette actions.
-  const handleCreateProjectTag = (name: string, color: string) => {
-    enqueueProjectMutation(`Create project ${name}`, (currentTags) => [
-      ...currentTags,
-      {
-        id: `proj-${Date.now()}`,
-        name,
-        color,
-        repos: []
-      }
-    ]);
-  };
-
-  const handleCreateProjectWithRepo = (name: string, color: string, repoFullName: string) => {
-    enqueueProjectMutation(`Create project ${name}`, (currentTags) => [
-      ...currentTags,
-      {
-        id: `proj-${Date.now()}`,
-        name,
-        color,
-        repos: [repoFullName]
-      }
-    ]);
+  const handleCreateProjectWithRepo = (name: string, repoFullName: string) => {
+    const topic = normalizeProjectTopicName(name);
+    handleAddProjectTag(topic, repoFullName);
   };
 
   const handleDeleteProjectTag = (tagId: string) => {
@@ -516,7 +510,14 @@ export default function App() {
     if (activeProjectDashboardId === tagId) {
       setActiveProjectDashboardId(null);
     }
-    enqueueProjectMutation(`Delete project ${tag.name}`, (currentTags) => currentTags.filter((item) => item.id !== tagId));
+    void runProjectMutation(`Delete project ${tag.name}`, async () => {
+      const res = await fetch(`/api/github/projects/${tag.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(`Project deletion failed with HTTP ${res.status}`);
+      }
+      await fetchRepos();
+      await refreshSyncDiagnostics();
+    });
   };
 
   // Update tabs callback to trigger reloading active items when comment adds
@@ -525,20 +526,30 @@ export default function App() {
     await refreshSyncDiagnostics();
 
     if (activeIssue) {
-      const res = await fetch(`/api/github/repos/${activeIssue.owner}/${activeIssue.repo}/issues`);
-      const issues = await res.json();
-      const match = issues.find((i: any) => i.number === activeIssue.data.number);
-      if (match) {
-        setActiveIssue({ ...activeIssue, data: match });
+      try {
+        const res = await fetch(`/api/github/repos/${activeIssue.owner}/${activeIssue.repo}/issues/${activeIssue.data.number}`);
+        if (!res.ok) {
+          // Keep active issue entry if the endpoint is temporarily unavailable.
+        } else {
+          const issue = await res.json() as Issue;
+          setActiveIssue({ ...activeIssue, data: issue });
+        }
+      } catch (err) {
+        console.error("Failed refreshing active issue", err);
       }
     }
 
     if (activePR) {
-      const res = await fetch(`/api/github/repos/${activePR.owner}/${activePR.repo}/prs`);
-      const prs = await res.json();
-      const match = prs.find((p: any) => p.number === activePR.data.number);
-      if (match) {
-        setActivePR({ ...activePR, data: match });
+      try {
+        const res = await fetch(`/api/github/repos/${activePR.owner}/${activePR.repo}/prs/${activePR.data.number}`);
+        if (!res.ok) {
+          // Keep active PR entry if the endpoint is temporarily unavailable.
+        } else {
+          const pr = await res.json() as PullRequest;
+          setActivePR({ ...activePR, data: pr });
+        }
+      } catch (err) {
+        console.error("Failed refreshing active PR", err);
       }
     }
   };
@@ -551,10 +562,10 @@ export default function App() {
       explorer: () => (
         <RepositoryExplorer />
       ),
-      issue: (props: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: any }>) => (
+      issue: (props: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: Issue }>) => (
         <DockviewIssueWrapper {...props} />
       ),
-      pr: (props: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: any }>) => (
+      pr: (props: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: PullRequest }>) => (
         <DockviewPRWrapper {...props} />
       ),
     };
@@ -573,14 +584,14 @@ export default function App() {
       if (panel) {
         setActiveTabId(panel.id);
         if (panel.id.startsWith("issue-")) {
-          const params = panel.params;
-          if (params?.data) {
-            setActiveIssue({ owner: params.owner, repo: params.repoName, data: params.data });
+          const params = panel.params as DockPanelParams | undefined;
+          if (params?.owner && params?.repoName && params?.data && "number" in params.data) {
+            setActiveIssue({ owner: params.owner, repo: params.repoName, data: params.data as Issue });
           }
         } else if (panel.id.startsWith("pr-")) {
-          const params = panel.params;
-          if (params?.data) {
-            setActivePR({ owner: params.owner, repo: params.repoName, data: params.data });
+          const params = panel.params as DockPanelParams | undefined;
+          if (params?.owner && params?.repoName && params?.data) {
+            setActivePR({ owner: params.owner, repo: params.repoName, data: params.data as PullRequest });
           }
         }
       }
@@ -606,9 +617,9 @@ export default function App() {
     openRepositoryExplorer: handleOpenRepositoryExplorer,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
-    onCreateProjectTag: handleCreateProjectTag,
     onCreateProjectWithRepo: handleCreateProjectWithRepo,
     onRemoveRepoFromTag: handleRemoveRepoFromTag,
+    onDeleteProjectTag: handleDeleteProjectTag,
     openTabs: handleOpenTab,
   }), [
     repos,
@@ -670,9 +681,9 @@ export default function App() {
               onSelectIssue={(owner, repo, data) => handleOpenTab(`issue-${owner}-${repo}-${data.number}`, "issue", `#${data.number}: ${data.title}`, owner, repo, data.number)}
               onSelectPR={(owner, repo, data) => handleOpenTab(`pr-${owner}-${repo}-${data.number}`, "pr", `PR #${data.number}: ${data.title}`, owner, repo, data.number)}
               onAddProjectTag={handleAddProjectTag}
-              onCreateProjectTag={handleCreateProjectTag}
               onCreateProjectWithRepo={handleCreateProjectWithRepo}
               onRemoveRepoFromTag={handleRemoveRepoFromTag}
+              onDeleteProjectTag={handleDeleteProjectTag}
               openRepo={handleOpenRepo}
               openProject={handleOpenProject}
               openTabs={handleOpenTab}
@@ -702,7 +713,6 @@ export default function App() {
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
         onToggleExplorer={() => handleOpenTab("explorer", "welcome", "Repository Explorer")}
         onSelectProjectFilter={setSelectedProjectFilter}
-        onCreateProjectTag={handleCreateProjectTag}
         onDeleteProjectTag={handleDeleteProjectTag}
         onGlobalRefresh={handleGlobalSync}
         onSwitchSidebarView={setActiveView}

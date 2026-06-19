@@ -23,8 +23,7 @@ import {
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
 import { useWorkspace } from "../context/WorkspaceContext";
-
-const PROJECT_COLORS = ["#3b82f6", "#10b981", "#ef4444", "#a855f7", "#f59e0b", "#14b8a6", "#f43f5e", "#64748b"];
+import { toMarkdownExcerpt } from "../utils/markdownExcerpt";
 
 export default function RepositoryExplorer() {
   const {
@@ -153,8 +152,8 @@ export default function RepositoryExplorer() {
 
   // Sort repos
   const sortedRepos = [...filteredRepos].sort((a, b) => {
-    let valueA: any = a.full_name;
-    let valueB: any = b.full_name;
+    let valueA: string | number = a.full_name;
+    let valueB: string | number = b.full_name;
 
     if (sortBy === "issues") {
       valueA = a.open_issues_count ?? 0;
@@ -282,8 +281,7 @@ export default function RepositoryExplorer() {
     if (!name) {
       return;
     }
-    const color = PROJECT_COLORS[projectTags.length % PROJECT_COLORS.length];
-    onCreateProjectWithRepo(name, color, selectedRepo.full_name);
+    onCreateProjectWithRepo(name, selectedRepo.full_name);
     setNewRepoProjectName("");
   };
 
@@ -524,7 +522,7 @@ export default function RepositoryExplorer() {
                               </div>
 
                               <div className="text-[11px] text-gray-400 break-words leading-normal">
-                                {issue.body ? issue.body.replace(/[#*`_-]/g, "").slice(0, 140) : "No description metadata requested."}...
+                                {toMarkdownExcerpt(issue.body, 140)}
                               </div>
 
                               {/* Labels row info footer */}
@@ -589,7 +587,7 @@ export default function RepositoryExplorer() {
                                 </div>
 
                                 <div className="text-[11px] text-gray-400 break-words leading-normal">
-                                  {pr.body ? pr.body.replace(/[#*`_-]/g, "").slice(0, 145) : "*No PR descriptive scope provided.*"}...
+                                  {toMarkdownExcerpt(pr.body, 145) || "*No PR descriptive scope provided.*"}
                                 </div>
 
                                 <div className="flex items-center gap-4 pt-1.5 flex-wrap">
@@ -814,11 +812,11 @@ export default function RepositoryExplorer() {
               {/* Right ordering criteria: Sort state directions */}
               <div className="flex items-center gap-2 text-xs">
                 <span className="text-gray-500 font-mono font-medium">Sort by:</span>
-                <select
-                  className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value as any)}
-                >
+              <select
+                className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "name" | "issues" | "updated")}
+              >
                   <option value="updated">Updated</option>
                   <option value="name">Name</option>
                   <option value="issues">Open issues</option>
@@ -979,7 +977,7 @@ export default function RepositoryExplorer() {
                                 ))}
                               </select>
                             ) : projectTags.length === 0 ? (
-                              <span className="text-[9px] font-mono text-gray-600 italic select-none">Create projects from the command palette</span>
+                              <span className="text-[9px] font-mono text-gray-600 italic select-none">Create a topic from the repo menu</span>
                             ) : null}
                           </div>
                         </div>

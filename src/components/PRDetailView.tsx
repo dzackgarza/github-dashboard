@@ -23,7 +23,7 @@ import {
   Workflow
 } from "lucide-react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
-import { PullRequest, DiffFile, Comment } from "../types";
+import { PullRequest, DiffFile, Comment, SecurityAlerts } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
 
 interface PRDetailViewProps {
@@ -123,7 +123,12 @@ export default function PRDetailView({
     state: "pending",
     runs: [],
     unresolved_threads_count: 0,
-    security_alerts_count: 0
+    security_alerts: {
+      dependabotOpen: 0,
+      codeScanningOpen: 0,
+      secretScanningOpen: 0,
+      totalOpen: 0
+    } satisfies SecurityAlerts
   };
 
   const renderDiffLineElement = (line: string, index: number) => {
@@ -242,9 +247,12 @@ export default function PRDetailView({
         </div>
       ) : (
         <PanelGroup orientation="horizontal" className="flex-1 min-h-0 flex overflow-hidden">
-          <Panel defaultSize={75} minSize={15} className="flex flex-col min-h-0 min-w-0 overflow-hidden">
+          <Panel defaultSize="75%" minSize="15%" className="flex flex-col min-h-0 min-w-0 overflow-hidden">
             {/* LEFT CONTENT AREA: TAB 1 Conversation OR TAB 2 Diff */}
-            <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+            <div
+              className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+              data-testid="pr-detail-main-panel"
+            >
             {activeSubTab === "conversation" ? (
               <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-[#18181a]">
                 {/* Main description of original post */}
@@ -436,11 +444,16 @@ export default function PRDetailView({
             </div>
           </Panel>
 
-          <PanelResizeHandle className="w-[4px] bg-[#1a1a1c]/80 hover:bg-[#007acc] active:bg-[#007acc] transition-colors cursor-col-resize select-none shrink-0" />
+          <PanelResizeHandle
+            className="w-[4px] bg-[#1a1a1c]/80 hover:bg-[#007acc] active:bg-[#007acc] transition-colors cursor-col-resize select-none shrink-0"
+          />
 
           {/* PERSISTENT RIGHT SIDEBAR: CI WORKFLOWS RUNS, OUTSTANDING SECURITY AUDITS, UNRESOLVED THREAD TRACKER */}
-          <Panel defaultSize={25} minSize={15} maxSize={80} className="flex flex-col min-h-0 min-w-0 overflow-hidden">
-            <div className="flex-1 bg-[#252526] border-l border-[#3e3e3e] flex flex-col justify-between select-none overflow-y-auto custom-scrollbar p-5 space-y-5 min-w-0">
+          <Panel defaultSize="25%" minSize="15%" maxSize="80%" className="flex flex-col min-h-0 min-w-0 overflow-hidden">
+            <div
+              className="flex-1 bg-[#252526] border-l border-[#3e3e3e] flex flex-col justify-between select-none overflow-y-auto custom-scrollbar p-5 space-y-5 min-w-0"
+              data-testid="pr-detail-sidebar"
+            >
               
               <div className="space-y-4">
                 {/* Sidebar Header Section 1: Merge branches pointer details */}
@@ -526,15 +539,20 @@ export default function PRDetailView({
                     <span>Security Alerts</span>
                   </span>
 
-                  {ciStatus.security_alerts_count > 0 ? (
+                  {ciStatus.security_alerts.totalOpen > 0 ? (
                     <div className="p-2.5 bg-red-950/20 border border-red-900/60 rounded text-[11px] leading-snug text-red-300 space-y-1">
                       <div className="font-bold flex items-center gap-1">
                         <AlertTriangle size={11} className="text-red-400" />
-                        <span>{ciStatus.security_alerts_count} security alerts</span>
+                        <span>{ciStatus.security_alerts.totalOpen} security alerts</span>
                       </div>
                       <p className="text-gray-400">
                         Review the repository security alerts in GitHub.
                       </p>
+                      <ul className="list-disc pl-5 space-y-1 text-[10px] text-gray-300">
+                        <li>Dependabot alerts: {ciStatus.security_alerts.dependabotOpen}</li>
+                        <li>Code scanning alerts: {ciStatus.security_alerts.codeScanningOpen}</li>
+                        <li>Secret scanning alerts: {ciStatus.security_alerts.secretScanningOpen}</li>
+                      </ul>
                     </div>
                   ) : (
                     <div className="bg-[#1b1b1c] p-2.5 rounded border border-[#3e3e3e]/40 text-center text-[10px] text-gray-500 font-mono">

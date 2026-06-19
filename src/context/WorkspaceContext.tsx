@@ -1,5 +1,5 @@
 import React, { createContext, useContext } from "react";
-import { Repo, ProjectTag, SyncLog, RateLimit, Tab } from "../types";
+import { Repo, ProjectTag, SyncLog, RateLimit, Tab, User } from "../types";
 
 export interface WorkspaceContextType {
   repos: Repo[];
@@ -9,7 +9,7 @@ export interface WorkspaceContextType {
   syncLogs: SyncLog[];
   rateLimit: RateLimit;
   isTokenConfigured: boolean;
-  githubUser: any;
+  githubUser: User | null;
   isSyncingGlobal: boolean;
   selectedProjectFilter: string;
   activeRepoFullName: string | null;
@@ -20,9 +20,9 @@ export interface WorkspaceContextType {
   openRepositoryExplorer: () => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
-  onCreateProjectTag: (name: string, color: string) => void;
-  onCreateProjectWithRepo: (name: string, color: string, repoFullName: string) => void;
+  onCreateProjectWithRepo: (name: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
+  onDeleteProjectTag: (tagId: string) => void;
   openTabs: (id: string, type: Tab["type"], title: string, owner?: string, repo?: string, number?: number) => void;
 }
 

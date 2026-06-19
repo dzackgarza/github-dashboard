@@ -11,9 +11,9 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "direnv exec . npm run dev",
+    command: "direnv exec . env PORT=3002 STATIC_DIST_DIR=./dist npm run dev",
     url: "http://127.0.0.1:3002",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [

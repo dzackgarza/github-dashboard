@@ -1,28 +1,158 @@
-import express from "express";
-import path from "path";
-import fs from "fs";
 import assert from "node:assert/strict";
-import { createServer as createViteServer } from "vite";
+import path from "path";
+import express from "express";
 import dotenv from "dotenv";
+import { createServer as createViteServer } from "vite";
+import { assertValidProjectTopicName, deriveProjectTagsFromRepos } from "./src/utils/projectTopics";
 
 dotenv.config();
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-assert(GITHUB_TOKEN, "GITHUB_TOKEN is required in the process environment.");
 
-const app = express();
-const PORT = 3002;
-app.use(express.json());
-
-// Path to persist project grouping data.
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "db.json");
-
-// Ensure data folder exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+function requireEnvVar(name: string): string {
+  const value = process.env[name];
+  assert(typeof value === "string" && value.trim().length > 0, `${name} is required in the process environment.`);
+  return value;
 }
 
-// In-memory types and state persistence representation
+function requirePort(name: string): number {
+  const raw = requireEnvVar(name);
+  const parsed = Number(raw);
+  assert(Number.isInteger(parsed) && parsed > 0 && parsed < 65536, `${name} must be an integer between 1 and 65535.`);
+  return parsed;
+}
+
+function requirePath(name: string): string {
+  const raw = requireEnvVar(name);
+  const resolved = path.resolve(process.cwd(), raw);
+  assert(resolved.length > 0, `${name} must be a valid path.`);
+  return resolved;
+}
+
+const PORT = requirePort("PORT");
+const STATIC_DIST_DIR = requirePath("STATIC_DIST_DIR");
+const GITHUB_TOKEN = requireEnvVar("GITHUB_TOKEN");
+
+const app = express();
+app.use(express.json());
+
+interface GithubUser {
+  login: string;
+  avatar_url: string;
+  html_url?: string;
+  name?: string;
+}
+
+interface RepoOwner {
+  login: string;
+}
+
+interface RepositoryFromApi {
+  id: number;
+  name: string;
+  full_name: string;
+  description: string;
+  html_url: string;
+  private: boolean;
+  stargazers_count: number;
+  language: string;
+  owner: RepoOwner;
+  updated_at: string;
+  topics: string[];
+  open_issues_count?: number;
+}
+
+interface LabelFromApi {
+  name: string;
+  color: string;
+}
+
+interface UserFromApi {
+  login: string;
+  avatar_url: string;
+}
+
+interface IssueFromApi {
+  number: number;
+  title: string;
+  body: string | null;
+  state: "open" | "closed";
+  html_url: string;
+  user: UserFromApi;
+  created_at: string;
+  updated_at: string;
+  comments: number;
+  pull_request?: unknown;
+  labels: LabelFromApi[];
+}
+
+interface PRFromApi {
+  number: number;
+  title: string;
+  body: string | null;
+  state: "open" | "closed";
+  html_url: string;
+  user: UserFromApi;
+  created_at: string;
+  updated_at: string;
+  comments: number;
+  labels: LabelFromApi[];
+  review_comments: number;
+  base: { ref: string };
+  head: { sha: string; ref: string };
+}
+
+interface BranchFromApi {
+  name: string;
+  commit: {
+    sha: string;
+    url: string;
+  };
+}
+
+interface CommitMetadataFromApi {
+  commit: {
+    committer: {
+      date?: string;
+    };
+  };
+}
+
+interface CommentFromApi {
+  id: string | number;
+  user: UserFromApi;
+  body: string;
+  created_at: string;
+}
+
+interface CheckSuiteApp {
+  name?: string;
+}
+
+interface CheckSuite {
+  app?: CheckSuiteApp | null;
+  status: string;
+  conclusion?: string | null;
+}
+
+interface CheckSuitesResponse {
+  check_suites: CheckSuite[];
+}
+
+interface DiffFileFromApi {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch: string | null;
+}
+
+interface GitFile {
+  file: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  code: string;
+}
+
 interface SyncLog {
   id: string;
   timestamp: string;
@@ -32,57 +162,16 @@ interface SyncLog {
   rateLimitRemaining: number;
 }
 
-interface ProjectTag {
-  id: string;
-  name: string;
-  color: string;
-  repos: string[]; // list of full names e.g., facebook/react
+interface GithubCacheEntry {
+  etag: string;
+  data: unknown;
+  lastSynced: string;
 }
 
-interface DBState {
-  projectTags: ProjectTag[];
+function assertArray<T>(value: unknown, message: string): asserts value is T[] {
+  assert(Array.isArray(value), message);
 }
 
-let dbState: DBState = {
-  projectTags: [],
-};
-
-function assertProjectTag(value: unknown): asserts value is ProjectTag {
-  assert(value && typeof value === "object", "Project entry must be an object.");
-  const tag = value as ProjectTag;
-  assert(typeof tag.id === "string" && tag.id.length > 0, "Project id is required.");
-  assert(typeof tag.name === "string" && tag.name.length > 0, "Project name is required.");
-  assert(typeof tag.color === "string" && tag.color.length > 0, "Project color is required.");
-  assert(Array.isArray(tag.repos), "Project repos must be an array.");
-  tag.repos.forEach((repoName) => {
-    assert(typeof repoName === "string" && repoName.includes("/"), "Project repo entries must be full repository names.");
-  });
-}
-
-function parseDBState(raw: unknown): DBState {
-  assert(raw && typeof raw === "object", "db.json must contain an object.");
-  const state = raw as DBState;
-  assert(Array.isArray(state.projectTags), "db.json projectTags must be an array.");
-  state.projectTags.forEach(assertProjectTag);
-  return { projectTags: state.projectTags };
-}
-
-function loadDB() {
-  if (fs.existsSync(DB_FILE)) {
-    const content = fs.readFileSync(DB_FILE, "utf-8");
-    dbState = parseDBState(JSON.parse(content));
-    return;
-  }
-  saveDB();
-}
-
-function saveDB() {
-  fs.writeFileSync(DB_FILE, JSON.stringify(parseDBState(dbState), null, 2), "utf-8");
-}
-
-loadDB();
-
-// Sync Logging in memory for telemetry
 const syncLogs: SyncLog[] = [
   {
     id: "init",
@@ -94,42 +183,32 @@ const syncLogs: SyncLog[] = [
   }
 ];
 
+let globalRateLimit = {
+  limit: 5000,
+  remaining: 5000,
+  reset: Math.floor(Date.now() / 1000) + 3600
+};
+
+const serverRepoCache: Record<string, GithubCacheEntry> = {};
+const syncTimestamps: Record<string, string> = {};
+
 function addLog(repo: string, type: SyncLog["type"], message: string) {
   const currentRateRemaining = globalRateLimit.remaining;
   syncLogs.unshift({
-    id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     timestamp: new Date().toISOString(),
     repo,
     type,
     message,
     rateLimitRemaining: currentRateRemaining
   });
+
   if (syncLogs.length > 200) {
     syncLogs.pop();
   }
 }
 
-// GitHub API Client/Proxy State
-let globalRateLimit = {
-  limit: 5000,
-  remaining: 5000,
-  reset: Math.floor(Date.now() / 1000) + 3600,
-};
-
-// Simple server caches to manage API delta syncs and ETag conditionally
-interface GithubCacheEntry {
-  etag: string;
-  data: any;
-  lastSynced: string;
-}
-const serverRepoCache: Record<string, GithubCacheEntry> = {};
-
-const syncTimestamps: Record<string, string> = {};
-
-// ----------------------------------------------------
-// GITHUB REAL API HANDLER
-// ----------------------------------------------------
-async function githubFetch(urlPath: string, etagKey?: string): Promise<{ data: any; status: number; headers: Headers }> {
+async function githubFetch<T>(urlPath: string, etagKey?: string): Promise<{ data: T | null; status: number; headers: Headers }> {
   const url = `https://api.github.com${urlPath}`;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
@@ -142,26 +221,90 @@ async function githubFetch(urlPath: string, etagKey?: string): Promise<{ data: a
   }
 
   const response = await fetch(url, { headers });
-  
+
   const limit = response.headers.get("x-ratelimit-limit");
   const remaining = response.headers.get("x-ratelimit-remaining");
   const reset = response.headers.get("x-ratelimit-reset");
-  if (limit) globalRateLimit.limit = parseInt(limit);
-  if (remaining) globalRateLimit.remaining = parseInt(remaining);
-  if (reset) globalRateLimit.reset = parseInt(reset);
+  if (limit) globalRateLimit.limit = Number(limit);
+  if (remaining) globalRateLimit.remaining = Number(remaining);
+  if (reset) globalRateLimit.reset = Number(reset);
 
-  const data = response.status === 304 ? null : await response.json();
+  const payload = response.status === 304 ? null : await response.json() as T;
   return {
-    data,
+    data: payload,
     status: response.status,
     headers: response.headers
   };
 }
 
+async function githubWrite<T>(method: "PUT" | "DELETE", urlPath: string, body: unknown): Promise<{ data: T | null; status: number; headers: Headers }> {
+  const url = `https://api.github.com${urlPath}`;
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `token ${GITHUB_TOKEN}`,
+      "User-Agent": "GitHub-PR-Issue-Manager-Dashboard",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const limit = response.headers.get("x-ratelimit-limit");
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const reset = response.headers.get("x-ratelimit-reset");
+  if (limit) globalRateLimit.limit = Number(limit);
+  if (remaining) globalRateLimit.remaining = Number(remaining);
+  if (reset) globalRateLimit.reset = Number(reset);
+
+  return {
+    data: response.status === 204 ? null : await response.json() as T,
+    status: response.status,
+    headers: response.headers
+  };
+}
+
+function assertRepoFullName(value: unknown): asserts value is string {
+  assert(typeof value === "string" && value.includes("/"), "Repository full name must be in owner/name form.");
+}
+
+function parseRouteNumber(raw: string, label: string): number {
+  const parsed = Number(raw);
+  assert(Number.isInteger(parsed) && parsed > 0, `${label} must be a positive integer.`);
+  return parsed;
+}
+
+function cacheCommit<T>(key: string, data: T, headers: Headers): void {
+  serverRepoCache[key] = {
+    etag: headers.get("etag") || "",
+    data,
+    lastSynced: new Date().toISOString()
+  };
+}
+
+function updateCachedRepoTopics(fullName: string, topics: string[]): void {
+  const cached = serverRepoCache["user-repos"];
+  if (!cached) {
+    return;
+  }
+
+  assert(Array.isArray(cached.data), "Cached repository data must be an array.");
+  const repos = cached.data as RepositoryFromApi[];
+  const index = repos.findIndex((repo) => repo.full_name === fullName);
+  if (index === -1) {
+    return;
+  }
+
+  repos[index] = { ...repos[index], topics };
+  cached.data = repos;
+  cached.lastSynced = new Date().toISOString();
+}
+
 // Check GITHUB_TOKEN configuration
-app.get("/api/github/config", async (req, res) => {
+app.get("/api/github/config", async (_req, res) => {
   try {
-    const { data, status } = await githubFetch("/user");
+    const { data, status } = await githubFetch<GithubUser>("/user");
+
     if (status === 200 && data) {
       addLog("System", "SUCCESS", `Token validated successfully. Connected as @${data.login}.`);
       return res.json({
@@ -175,96 +318,87 @@ app.get("/api/github/config", async (req, res) => {
         message: "Successfully synchronized with GitHub."
       });
     }
+
     addLog("System", "ERROR", `GitHub token validation failed with status ${status}.`);
     return res.status(status).json({ error: `GitHub token validation failed with status ${status}.` });
-  } catch (err: any) {
-    addLog("System", "ERROR", `Error verifying GitHub token: ${err?.message || err}.`);
+  } catch (err) {
+    addLog("System", "ERROR", `Error verifying GitHub token: ${String(err)}.`);
     return res.status(500).json({ error: "GitHub token verification failed." });
   }
 });
 
-// GET all Repositories (Public & Private)
-app.get("/api/github/repos", async (req, res) => {
+app.get("/api/github/repos", async (_req, res) => {
   const cacheKey = "user-repos";
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch("/user/repos?per_page=100&sort=updated", cacheKey);
-    
+    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", cacheKey);
+
     if (status === 304 && cached) {
-      addLog("All Repos list", "304_HIT", "Repository list checked. No updates (304 Not Modified). 0 API units spent.");
+      assert(Array.isArray(cached.data), "Cached repository data must be an array.");
+      const cachedRepos = cached.data as RepositoryFromApi[];
       return res.json({
-        repos: cached.data,
-        projectTags: dbState.projectTags,
-        syncTimestamps: syncTimestamps,
+        repos: cachedRepos,
+        projectTags: deriveProjectTagsFromRepos(cachedRepos),
+        syncTimestamps,
         rateLimit: globalRateLimit
       });
     }
 
     if (status === 200 && data) {
-      const etag = headers.get("etag") || "";
-      serverRepoCache[cacheKey] = {
-        etag,
-        data,
-        lastSynced: new Date().toISOString()
-      };
-      // Keep track of real fetch sync timestamp on server
-      data.forEach((r: any) => {
-        if (!syncTimestamps[r.full_name]) {
-          syncTimestamps[r.full_name] = new Date().toISOString();
-        }
+      assertArray<RepositoryFromApi>(data, "GitHub repository list must be an array.");
+      cacheCommit(cacheKey, data, headers);
+
+      data.forEach((repo) => {
+        syncTimestamps[repo.full_name] = new Date().toISOString();
       });
+
       addLog("All Repos list", "SUCCESS", `Fetched ${data.length} repositories from live GitHub API. 1 API unit spent.`);
       return res.json({
         repos: data,
-        projectTags: dbState.projectTags,
-        syncTimestamps: syncTimestamps,
+        projectTags: deriveProjectTagsFromRepos(data),
+        syncTimestamps,
         rateLimit: globalRateLimit
       });
     }
 
     addLog("All Repos list", "ERROR", `GitHub repositories request failed with status ${status}.`);
     return res.status(status).json({ error: `GitHub repositories request failed with status ${status}.` });
-
-  } catch (err: any) {
-    addLog("All Repos fetch", "ERROR", `Crashed while fetching repos list: ${err?.message || err}`);
+  } catch (err) {
+    addLog("All Repos fetch", "ERROR", `Crashed while fetching repos list: ${String(err)}.`);
     return res.status(500).json({ error: "GitHub repositories request failed." });
   }
 });
 
-// Force Sync (Conditional polling delta test per repo)
 app.post("/api/github/repos/:owner/:repo/sync", async (req, res) => {
   const { owner, repo } = req.params;
   const fullName = `${owner}/${repo}`;
-
-  syncTimestamps[fullName] = new Date().toISOString();
+  assertRepoFullName(fullName);
 
   const cacheKeyIssues = `issues-${fullName}`;
   const cacheKeyPrs = `prs-${fullName}`;
 
+  syncTimestamps[fullName] = new Date().toISOString();
+
   try {
-    const issueRes = await githubFetch(`/repos/${fullName}/issues?state=open&per_page=30`, cacheKeyIssues);
+    const issueRes = await githubFetch<IssueFromApi[]>(`/repos/${fullName}/issues?state=open&per_page=30`, cacheKeyIssues);
+
     if (issueRes.status === 200 && issueRes.data) {
-      serverRepoCache[cacheKeyIssues] = {
-        etag: issueRes.headers.get("etag") || "",
-        data: issueRes.data,
-        lastSynced: new Date().toISOString()
-      };
+      assertArray<IssueFromApi>(issueRes.data, "GitHub issue list must be an array.");
+      cacheCommit(cacheKeyIssues, issueRes.data, issueRes.headers);
       addLog(fullName, "SUCCESS", `Sync detected updates on issues repository tree. Saved and cached.`);
     } else if (issueRes.status === 304) {
-      addLog(fullName, "304_HIT", `Issues delta check: returned 304 Not Modified. Rate cost saved.`);
+      addLog(fullName, "304_HIT", "Issues delta check: returned 304 Not Modified. Rate cost saved.");
     }
 
-    const prsRes = await githubFetch(`/repos/${fullName}/pulls?state=open&per_page=30`, cacheKeyPrs);
+    const prsRes = await githubFetch<PRFromApi[]>(`/repos/${fullName}/pulls?state=open&per_page=30`, cacheKeyPrs);
+
     if (prsRes.status === 200 && prsRes.data) {
-      serverRepoCache[cacheKeyPrs] = {
-        etag: prsRes.headers.get("etag") || "",
-        data: prsRes.data,
-        lastSynced: new Date().toISOString()
-      };
-      addLog(fullName, "SUCCESS", `Sync detected updates on pull requests repository tree. Saved.`);
+      assertArray<PRFromApi>(prsRes.data, "GitHub PR list must be an array.");
+      cacheCommit(cacheKeyPrs, prsRes.data, prsRes.headers);
+      addLog(fullName, "SUCCESS", "Sync detected updates on pull requests repository tree. Saved.");
     } else if (prsRes.status === 304) {
-      addLog(fullName, "304_HIT", `Pull requests delta check: returned 304 Not Modified. Sync efficiency 100%.`);
+      addLog(fullName, "304_HIT", "Pull requests delta check: returned 304 Not Modified. Sync efficiency 100%.");
     }
 
     return res.json({
@@ -272,33 +406,31 @@ app.post("/api/github/repos/:owner/:repo/sync", async (req, res) => {
       lastSynced: syncTimestamps[fullName],
       message: "Live API synchronization performed cleanly with conditional ETags."
     });
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Sync failed during GitHub network call: ${err.message || err}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Sync failed during GitHub network call: ${String(err)}`);
     return res.status(500).json({ error: "GitHub sync failed." });
   }
 });
 
-// FETCH issues
 app.get("/api/github/repos/:owner/:repo/issues", async (req, res) => {
   const { owner, repo } = req.params;
   const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
 
   const cacheKey = `issues-${fullName}`;
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/issues?state=open&per_page=50`, cacheKey);
-    let finalIssues = [];
+    const { data, status, headers } = await githubFetch<IssueFromApi[]>(`/repos/${fullName}/issues?state=open&per_page=50`, cacheKey);
+    let finalIssues: IssueFromApi[] = [];
 
     if (status === 304 && cached) {
+      assertArray<IssueFromApi>(cached.data, "Cached issue data must be an array.");
       addLog(fullName, "304_HIT", `Issues list (cached ETag hit). Served ${cached.data.length} issues.`);
       finalIssues = cached.data;
     } else if (status === 200 && data) {
-      serverRepoCache[cacheKey] = {
-        etag: headers.get("etag") || "",
-        data,
-        lastSynced: new Date().toISOString()
-      };
+      assertArray<IssueFromApi>(data, "GitHub issue list must be an array.");
+      cacheCommit(cacheKey, data, headers);
       addLog(fullName, "INFO", `Served ${data.length} issues from GitHub. Saved to conditional buffer.`);
       finalIssues = data;
     } else {
@@ -306,38 +438,33 @@ app.get("/api/github/repos/:owner/:repo/issues", async (req, res) => {
       return res.status(status).json({ error: `GitHub issues request failed with status ${status}.` });
     }
 
-    // Filter out PR structures (GitHub API returns PRs inside issues endpoint)
-    const issuesOnly = finalIssues.filter((i: any) => !i.pull_request);
-
+    const issuesOnly = finalIssues.filter((item) => item.pull_request === undefined);
     return res.json(issuesOnly);
-
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Failed to retrieve issues: ${err.message}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to retrieve issues: ${String(err)}`);
     return res.status(500).json({ error: "GitHub issues request failed." });
   }
 });
 
-// FETCH Pull Requests
 app.get("/api/github/repos/:owner/:repo/prs", async (req, res) => {
   const { owner, repo } = req.params;
   const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
 
   const cacheKey = `prs-${fullName}`;
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/pulls?state=open&per_page=50`, cacheKey);
-    let finalPrs = [];
+    const { data, status, headers } = await githubFetch<PRFromApi[]>(`/repos/${fullName}/pulls?state=open&per_page=50`, cacheKey);
+    let finalPrs: PRFromApi[] = [];
 
     if (status === 304 && cached) {
+      assertArray<PRFromApi>(cached.data, "Cached PR data must be an array.");
       addLog(fullName, "304_HIT", `Pull requests (cached ETag hit). Served ${cached.data.length} items from memory.`);
       finalPrs = cached.data;
     } else if (status === 200 && data) {
-      serverRepoCache[cacheKey] = {
-        etag: headers.get("etag") || "",
-        data,
-        lastSynced: new Date().toISOString()
-      };
+      assertArray<PRFromApi>(data, "GitHub PR list must be an array.");
+      cacheCommit(cacheKey, data, headers);
       addLog(fullName, "INFO", `Served ${data.length} pull requests from GitHub.`);
       finalPrs = data;
     } else {
@@ -346,98 +473,176 @@ app.get("/api/github/repos/:owner/:repo/prs", async (req, res) => {
     }
 
     return res.json(finalPrs);
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Failed to retrieve PRs: ${err.message}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to retrieve PRs: ${String(err)}`);
     return res.status(500).json({ error: "GitHub pull requests request failed." });
   }
 });
 
-// FETCH Branches for Repo-Specific Dashboard
 app.get("/api/github/repos/:owner/:repo/branches", async (req, res) => {
   const { owner, repo } = req.params;
   const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
 
   const cacheKey = `branches-${fullName}`;
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/branches?per_page=30`, cacheKey);
-    let finalBranches = [];
+    const { data, status, headers } = await githubFetch<BranchFromApi[]>(`/repos/${fullName}/branches?per_page=30`, cacheKey);
+    let finalBranches: Array<{ name: string; commit: { sha: string; date: string } }> = [];
 
     if (status === 304 && cached) {
+      assertArray<{ name: string; commit: { sha: string; date: string } }>(cached.data, "Cached branch data must be an array.");
       finalBranches = cached.data;
-    } else if (status === 200 && data) {
-      // To preserve rate limits, we provide realistic but deterministic last-commit dates derived from current hour and repo details
-      const enriched = data.map((b: any, index: number) => {
-        const offsetHours = index * 4 + 1;
-        return {
-          name: b.name,
-          commit: {
-            sha: b.commit?.sha?.substring(0, 8) || "sha-n/a",
-            date: new Date(Date.now() - offsetHours * 3600000).toISOString()
-          }
-        };
-      });
+      return res.json(finalBranches);
+    }
 
-      serverRepoCache[cacheKey] = {
-        etag: headers.get("etag") || "",
-        data: enriched,
-        lastSynced: new Date().toISOString()
-      };
+    if (status === 200 && data) {
+      assertArray<BranchFromApi>(data, "GitHub branch list must be an array.");
+
+      const enriched = await Promise.all(
+        data.map(async (branch, index) => {
+          const commitRef = branch.commit?.sha;
+          assert(typeof commitRef === "string" && commitRef.length > 0, `Branch ${branch.name} commit SHA is missing.`);
+          const commitRes = await githubFetch<CommitMetadataFromApi>(`/repos/${fullName}/commits/${commitRef}`);
+          if (commitRes.status !== 200 || !commitRes.data) {
+            throw new Error(`Commit metadata request for ${branch.name} failed with status ${commitRes.status}.`);
+          }
+
+          const commitDate = commitRes.data.commit?.committer?.date;
+          assert(typeof commitDate === "string" && commitDate.length > 0, `Commit metadata for ${branch.name} is missing committer date.`);
+
+          return {
+            name: branch.name,
+            commit: {
+              sha: commitRef.slice(0, 8),
+              date: commitDate
+            }
+          };
+        })
+      );
+
+      // Keep commit metadata query ordering deterministic by branch order.
+      // The branch ordering is still derived from the branch API first page.
       finalBranches = enriched;
+      cacheCommit(cacheKey, finalBranches, headers);
     } else {
       addLog(fullName, "ERROR", `GitHub branches request failed with status ${status}.`);
       return res.status(status).json({ error: `GitHub branches request failed with status ${status}.` });
     }
 
     return res.json(finalBranches);
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Failed to fetch branches: ${err.message}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to fetch branches: ${String(err)}`);
     return res.status(500).json({ error: "GitHub branches request failed." });
   }
 });
 
-// GET Comments & Timeline for Issue/PR
+app.get("/api/github/repos/:owner/:repo/issues/:number", async (req, res) => {
+  const { owner, repo, number } = req.params;
+  const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
+  let issueNumber: number;
+  try {
+    issueNumber = parseRouteNumber(number, "issue number");
+  } catch {
+    return res.status(400).json({ error: "Issue number must be a positive integer." });
+  }
+
+  try {
+    const singleIssueRes = await githubFetch<IssueFromApi>(`/repos/${fullName}/issues/${issueNumber}`);
+    if (singleIssueRes.status !== 200 || !singleIssueRes.data) {
+      return res.status(singleIssueRes.status).json({ error: `GitHub issue request failed with status ${singleIssueRes.status}.` });
+    }
+
+    if (singleIssueRes.data.pull_request !== undefined) {
+      return res.status(400).json({ error: "Requested resource is a pull request, not an issue." });
+    }
+
+    return res.json(singleIssueRes.data);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to fetch single issue: ${String(err)}`);
+    return res.status(500).json({ error: "GitHub issue request failed." });
+  }
+});
+
+app.get("/api/github/repos/:owner/:repo/prs/:number", async (req, res) => {
+  const { owner, repo, number } = req.params;
+  const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
+  let prNumber: number;
+  try {
+    prNumber = parseRouteNumber(number, "PR number");
+  } catch {
+    return res.status(400).json({ error: "Pull request number must be a positive integer." });
+  }
+
+  try {
+    const singlePRRes = await githubFetch<PRFromApi>(`/repos/${fullName}/pulls/${prNumber}`);
+    if (singlePRRes.status !== 200 || !singlePRRes.data) {
+      return res.status(singlePRRes.status).json({ error: `GitHub PR request failed with status ${singlePRRes.status}.` });
+    }
+
+    return res.json(singlePRRes.data);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to fetch single PR: ${String(err)}`);
+    return res.status(500).json({ error: "GitHub PR request failed." });
+  }
+});
+
 app.get("/api/github/repos/:owner/:repo/issues/:number/comments", async (req, res) => {
   const { owner, repo, number } = req.params;
   const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
+  let issueNumber: number;
+  try {
+    issueNumber = parseRouteNumber(number, "issue number");
+  } catch {
+    return res.status(400).json({ error: "Issue number must be a positive integer." });
+  }
 
-  const cacheKey = `comments-${fullName}-${number}`;
+  const cacheKey = `comments-${fullName}-${issueNumber}`;
   const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch(`/repos/${fullName}/issues/${number}/comments`, cacheKey);
+    const { data, status, headers } = await githubFetch<CommentFromApi[]>(`/repos/${fullName}/issues/${issueNumber}/comments`, cacheKey);
     if (status === 304 && cached) {
+      assertArray<CommentFromApi>(cached.data, "Cached comments data must be an array.");
       return res.json(cached.data);
     }
+
     if (status === 200 && data) {
-      serverRepoCache[cacheKey] = {
-        etag: headers.get("etag") || "",
-        data,
-        lastSynced: new Date().toISOString()
-      };
+      assertArray<CommentFromApi>(data, "GitHub comments response must be an array.");
+      cacheCommit(cacheKey, data, headers);
       return res.json(data);
     }
+
     return res.status(status).json({ error: `GitHub comments request failed with status ${status}.` });
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Failed to fetch comments: ${err.message}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed to fetch comments: ${String(err)}`);
     return res.status(500).json({ error: "GitHub comments request failed." });
   }
 });
 
-// ADD standard comment
 app.post("/api/github/repos/:owner/:repo/issues/:number/comments", async (req, res) => {
   const { owner, repo, number } = req.params;
   const fullName = `${owner}/${repo}`;
-  const { body } = req.body;
+  assertRepoFullName(fullName);
+  let issueNumber: number;
+  try {
+    issueNumber = parseRouteNumber(number, "issue number");
+  } catch {
+    return res.status(400).json({ error: "Issue number must be a positive integer." });
+  }
 
-  if (!body || body.trim() === "") {
+  const body = req.body?.body;
+  if (typeof body !== "string" || body.trim() === "") {
     return res.status(400).json({ error: "Empty comment body prohibited." });
   }
 
   try {
     const url = `https://api.github.com/repos/${fullName}/issues/${number}/comments`;
-    const response = await fetch(url, {
+      const response = await fetch(url, {
       method: "POST",
       headers: {
         Accept: "application/vnd.github.v3+json",
@@ -449,67 +654,99 @@ app.post("/api/github/repos/:owner/:repo/issues/:number/comments", async (req, r
     });
 
     if (response.status === 201) {
-      const data = await response.json();
-      addLog(fullName, "SUCCESS", `Comment posted successfully to live GitHub on item #${number}.`);
-      
-      // Invalidate comments cache to force re-fetch
-      delete serverRepoCache[`comments-${fullName}-${number}`];
-
+      const data = await response.json() as CommentFromApi;
+      addLog(fullName, "SUCCESS", `Comment posted successfully to live GitHub on item #${issueNumber}.`);
+      delete serverRepoCache[`comments-${fullName}-${issueNumber}`];
       return res.json(data);
-    } else {
-      const errTxt = await response.text();
-      addLog(fullName, "ERROR", `Failed to post comment to live GitHub. Status code: ${response.status}.`);
-      return res.status(response.status).json({ error: errTxt });
     }
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+
+    const errTxt = await response.text();
+    addLog(fullName, "ERROR", `Failed to post comment to live GitHub. Status code: ${response.status}.`);
+    return res.status(response.status).json({ error: errTxt });
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
   }
 });
 
-// FETCH Pull Request details
 app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) => {
   const { owner, repo, number } = req.params;
   const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
+  let prNumber: number;
+  try {
+    prNumber = parseRouteNumber(number, "PR number");
+  } catch {
+    return res.status(400).json({ error: "Pull request number must be a positive integer." });
+  }
 
   try {
-    const prDetailsRes = await githubFetch(`/repos/${fullName}/pulls/${number}`);
-    const filesRes = await githubFetch(`/repos/${fullName}/pulls/${number}/files`);
+    const prDetailsRes = await githubFetch<PRFromApi>(`/repos/${fullName}/pulls/${prNumber}`);
+    const filesRes = await githubFetch<DiffFileFromApi[]>(`/repos/${fullName}/pulls/${prNumber}/files`);
 
-    if (prDetailsRes.status !== 200 || filesRes.status !== 200) {
+    if (prDetailsRes.status !== 200 || filesRes.status !== 200 || !prDetailsRes.data || !filesRes.data) {
       addLog(fullName, "ERROR", `GitHub PR detail request failed for #${number}.`);
       return res.status(502).json({ error: "GitHub PR detail request failed." });
     }
 
-    const headSha = prDetailsRes.data.head.sha;
-    assert(headSha, "GitHub pull request response must include head.sha.");
+    const headSha = prDetailsRes.data.head?.sha;
+    assert(typeof headSha === "string" && headSha.length > 0, "GitHub pull request response must include head.sha.");
 
-    const checksRes = await githubFetch(`/repos/${fullName}/commits/${headSha}/check-suites`);
-    if (checksRes.status !== 200) {
-      addLog(fullName, "ERROR", `GitHub check suite request failed for #${number}.`);
-      return res.status(502).json({ error: "GitHub check suite request failed." });
+    const [dependabotRes, codeScanningRes, secretScanningRes, checksRes] = await Promise.all([
+      githubFetch<unknown[]>(`/repos/${fullName}/dependabot/alerts?state=open&per_page=100`),
+      githubFetch<unknown[]>(`/repos/${fullName}/code-scanning/alerts?state=open&per_page=100`),
+      githubFetch<unknown[]>(`/repos/${fullName}/secret-scanning/alerts?state=open&per_page=100`),
+      githubFetch<CheckSuitesResponse>(`/repos/${fullName}/commits/${headSha}/check-suites`)
+    ]);
+
+    if (
+      checksRes.status !== 200 ||
+      !checksRes.data ||
+      dependabotRes.status !== 200 ||
+      !dependabotRes.data ||
+      codeScanningRes.status !== 200 ||
+      !codeScanningRes.data ||
+      secretScanningRes.status !== 200 ||
+      !secretScanningRes.data
+    ) {
+      addLog(fullName, "ERROR", `GitHub security or check suite lookup failed for #${number}.`);
+      return res.status(502).json({ error: "GitHub PR detail request failed due to unavailable check or security endpoints." });
     }
 
-    const runStatusList = checksRes.data.check_suites.map((sh: any) => ({
-      name: sh.app?.name || "Workflow run Check",
-      status: sh.status,
+    assertArray<unknown>(dependabotRes.data, "Dependabot security alerts response must be an array.");
+    assertArray<unknown>(codeScanningRes.data, "Code scanning alerts response must be an array.");
+    assertArray<unknown>(secretScanningRes.data, "Secret scanning alerts response must be an array.");
+    assertArray<unknown>(filesRes.data, "PR file list must be an array.");
+
+    const runStatusList = checksRes.data.check_suites.map((suite) => ({
+      name: suite.app?.name || "Workflow run Check",
+      status: suite.status,
       elapsed: "Active sync",
-      conclusion: sh.conclusion
+      conclusion: suite.conclusion
     }));
 
-    const state = checksRes.data.check_suites[0]?.conclusion || "pending";
+    const conclusion = checksRes.data.check_suites[0]?.conclusion;
+    const resolvedState: "success" | "failure" | "pending" =
+      conclusion === "success" ? "success" : conclusion === "failure" ? "failure" : "pending";
 
-    const liveFiles = filesRes.data.map((f: any) => ({
-      file: f.filename,
-      status: f.status,
-      additions: f.additions,
-      deletions: f.deletions,
-      code: f.patch
-    }));
+    const securityAlerts = {
+      dependabotOpen: dependabotRes.data.length,
+      codeScanningOpen: codeScanningRes.data.length,
+      secretScanningOpen: secretScanningRes.data.length,
+      totalOpen: dependabotRes.data.length + codeScanningRes.data.length + secretScanningRes.data.length
+    };
+
+    const liveFiles = filesRes.data.map((file) => ({
+      file: file.filename,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      code: file.patch
+    } as GitFile));
 
     return res.json({
-      number: parseInt(number),
+      number: Number(number),
       title: prDetailsRes.data.title,
-      body: prDetailsRes.data.body,
+      body: prDetailsRes.data.body || "",
       state: prDetailsRes.data.state,
       html_url: prDetailsRes.data.html_url,
       user: prDetailsRes.data.user,
@@ -519,61 +756,125 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
       head_branch: prDetailsRes.data.head.ref,
       diff: liveFiles,
       ci_status: {
-        state: state === "success" ? "success" : state === "failure" ? "failure" : "pending",
+        state: resolvedState,
         runs: runStatusList,
-        unresolved_threads_count: prDetailsRes.data?.review_comments || 0,
-        security_alerts_count: 0
+        unresolved_threads_count: prDetailsRes.data.review_comments || 0,
+        security_alerts: {
+          dependabotOpen: securityAlerts.dependabotOpen,
+          codeScanningOpen: securityAlerts.codeScanningOpen,
+          secretScanningOpen: securityAlerts.secretScanningOpen,
+          totalOpen: securityAlerts.totalOpen
+        }
       }
     });
-
-  } catch (err: any) {
-    addLog(fullName, "ERROR", `Failed fetching live PR details for #${number}: ${err.message || err}`);
+  } catch (err) {
+    addLog(fullName, "ERROR", `Failed fetching live PR details for #${number}: ${String(err)}`);
     return res.status(500).json({ error: "GitHub PR detail request failed." });
   }
 });
 
-// UPDATE project tags
-app.get("/api/github/projects", (req, res) => {
-  res.json(dbState.projectTags);
+app.get("/api/github/projects", async (_req, res) => {
+  const cacheKey = "user-repos";
+  const cached = serverRepoCache[cacheKey];
+
+  try {
+    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", cacheKey);
+
+    if (status === 304 && cached) {
+      assert(Array.isArray(cached.data), "Cached repository data must be an array.");
+      return res.json(deriveProjectTagsFromRepos(cached.data as RepositoryFromApi[]));
+    }
+
+    if (status === 200 && data) {
+      assertArray<RepositoryFromApi>(data, "GitHub repository list must be an array.");
+      cacheCommit(cacheKey, data, headers);
+      return res.json(deriveProjectTagsFromRepos(data));
+    }
+
+    return res.status(status).json({ error: `GitHub repository topics request failed with status ${status}.` });
+  } catch (err) {
+    return res.status(500).json({ error: `GitHub repository topics request failed: ${String(err)}` });
+  }
 });
 
-app.post("/api/github/projects", (req, res) => {
-  const { tags } = req.body;
-  assert(Array.isArray(tags), "Project update requires a tags array.");
-  tags.forEach(assertProjectTag);
-  dbState.projectTags = tags;
-  saveDB();
-  addLog("Projects", "SUCCESS", "Project repository groups updated.");
-  return res.json({ success: true, projectTags: dbState.projectTags });
+app.put("/api/github/repos/:owner/:repo/topics", async (req, res) => {
+  const { owner, repo } = req.params;
+  const fullName = `${owner}/${repo}`;
+  assertRepoFullName(fullName);
+
+  const { topics } = req.body as { topics: unknown };
+  assert(Array.isArray(topics), "Repository topic update requires a topics array.");
+  topics.forEach((topic) => {
+    assert(typeof topic === "string", "Repository topics must be strings.");
+    assertValidProjectTopicName(topic);
+  });
+
+  try {
+    const response = await githubWrite<{ names: string[] }>("PUT", `/repos/${fullName}/topics`, { names: topics });
+    if (response.status !== 200 || !response.data) {
+      return res.status(response.status).json({ error: `GitHub topic update failed with status ${response.status}.` });
+    }
+
+    updateCachedRepoTopics(fullName, response.data.names);
+    syncTimestamps[fullName] = new Date().toISOString();
+    addLog(fullName, "SUCCESS", `Updated GitHub repository topics to: ${response.data.names.join(", ") || "(none)"}.`);
+    return res.json({ success: true, topics: response.data.names });
+  } catch (err) {
+    addLog(fullName, "ERROR", `GitHub repository topic update failed: ${String(err)}`);
+    return res.status(500).json({ error: "GitHub repository topic update failed." });
+  }
 });
 
-// GET Rate Limit Status directly
-app.get("/api/github/rate-limit_status", (req, res) => {
+app.delete("/api/github/projects/:topic", async (req, res) => {
+  const { topic } = req.params;
+  assertValidProjectTopicName(topic);
+
+  try {
+    const reposResponse = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", "user-repos");
+    const repos = reposResponse.status === 304
+      ? serverRepoCache["user-repos"]?.data as RepositoryFromApi[] | undefined
+      : reposResponse.data;
+
+    assert(Array.isArray(repos), "GitHub repository list must be available before deleting a project topic.");
+
+    const reposWithTopic = repos.filter((repo) => repo.topics.includes(topic));
+    for (const repo of reposWithTopic) {
+      const nextTopics = repo.topics.filter((entry) => entry !== topic);
+      const writeResponse = await githubWrite<{ names: string[] }>("PUT", `/repos/${repo.full_name}/topics`, { names: nextTopics });
+      if (writeResponse.status !== 200 || !writeResponse.data) {
+        return res.status(writeResponse.status).json({ error: `GitHub topic deletion failed for ${repo.full_name} with status ${writeResponse.status}.` });
+      }
+      updateCachedRepoTopics(repo.full_name, writeResponse.data.names);
+      syncTimestamps[repo.full_name] = new Date().toISOString();
+    }
+
+    addLog("Projects", "SUCCESS", `Removed GitHub topic ${topic} from ${reposWithTopic.length} repositories.`);
+    return res.json({ success: true, topic, reposUpdated: reposWithTopic.map((repo) => repo.full_name) });
+  } catch (err) {
+    addLog("Projects", "ERROR", `GitHub topic deletion failed: ${String(err)}`);
+    return res.status(500).json({ error: "GitHub topic deletion failed." });
+  }
+});
+
+app.get("/api/github/rate-limit_status", (_req, res) => {
   res.json(globalRateLimit);
 });
 
-// GET Sync performance logs logs
-app.get("/api/github/sync-logs", (req, res) => {
+app.get("/api/github/sync-logs", (_req, res) => {
   res.json(syncLogs);
 });
 
-
-// ----------------------------------------------------
-// BOOTSTRAP ENVIRONMENT & DEVELOPMENT MIDDLEWARES
-// ----------------------------------------------------
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: "spa",
+      appType: "spa"
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    // Serve the SPA entrypoint for client-side routes.
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+    app.use(express.static(STATIC_DIST_DIR));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(STATIC_DIST_DIR, "index.html"));
     });
   }
 

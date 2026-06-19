@@ -18,8 +18,6 @@ import {
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
 
-const PROJECT_COLORS = ["#3b82f6", "#10b981", "#ef4444", "#a855f7", "#f59e0b", "#14b8a6", "#f43f5e", "#64748b"];
-
 interface VSCodeSidebarProps {
   activeView: "explorer" | "sync" | "settings";
   repos: Repo[];
@@ -29,9 +27,9 @@ interface VSCodeSidebarProps {
   onSelectIssue: (owner: string, repoName: string, issue: Issue) => void;
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
-  onCreateProjectTag: (name: string, color: string) => void;
-  onCreateProjectWithRepo: (name: string, color: string, repoFullName: string) => void;
+  onCreateProjectWithRepo: (name: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
+  onDeleteProjectTag: (tagId: string) => void;
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
   openTabs: (id: string, type: "issue" | "pr" | "settings" | "welcome", title: string, owner?: string, repo?: string, number?: number) => void;
@@ -51,9 +49,9 @@ export default function VSCodeSidebar({
   onSelectIssue,
   onSelectPR,
   onAddProjectTag,
-  onCreateProjectTag,
   onCreateProjectWithRepo,
   onRemoveRepoFromTag,
+  onDeleteProjectTag,
   openRepo,
   openProject,
   openTabs,
@@ -68,7 +66,6 @@ export default function VSCodeSidebar({
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
-  const [newProjectName, setNewProjectName] = useState("");
   const [contextProjectName, setContextProjectName] = useState("");
 
   // Track expanded repositories
@@ -80,6 +77,8 @@ export default function VSCodeSidebar({
   const [repoIssues, setRepoIssues] = useState<Record<string, Issue[]>>({});
   const [repoPRs, setRepoPRs] = useState<Record<string, PullRequest[]>>({});
   const [loadingContent, setLoadingContent] = useState<Record<string, boolean>>({});
+
+  const normalizeFullName = (fullName: string) => fullName.replace(/\//g, "-");
 
   // Right-click Context Menu state
   const [contextMenu, setContextMenu] = useState<{
@@ -158,19 +157,6 @@ export default function VSCodeSidebar({
     return matchesSearch && matchesProject;
   });
 
-  const nextProjectColor = projectTags.length === 0
-    ? PROJECT_COLORS[0]
-    : PROJECT_COLORS[projectTags.length % PROJECT_COLORS.length];
-
-  const createProject = () => {
-    const name = newProjectName.trim();
-    if (!name) {
-      return;
-    }
-    onCreateProjectTag(name, nextProjectColor);
-    setNewProjectName("");
-  };
-
   const createContextProject = () => {
     if (!contextMenu) {
       return;
@@ -179,7 +165,7 @@ export default function VSCodeSidebar({
     if (!name) {
       return;
     }
-    onCreateProjectWithRepo(name, nextProjectColor, contextMenu.repoFullName);
+    onCreateProjectWithRepo(name, contextMenu.repoFullName);
     setContextProjectName("");
     setContextMenu(null);
   };
@@ -254,7 +240,7 @@ export default function VSCodeSidebar({
                         <div key={repo.id} className="relative select-none">
                           {/* Repo Folder Trigger */}
                           <div
-                            data-testid={`sidebar-repo-${repo.full_name}`}
+                            data-testid={`sidebar-repo-${normalizeFullName(repo.full_name)}`}
                             onContextMenu={(e) => handleRightClickRepo(e, repo.full_name)}
                             onClick={() =>
                               handleToggleRepo(repo.owner.login, repo.name, repo.full_name)
@@ -318,6 +304,7 @@ export default function VSCodeSidebar({
                                   {/* Subfolder: Issues */}
                                   <div>
                                     <div
+                                      data-testid={`sidebar-subfolder-${normalizeFullName(repo.full_name)}-issues`}
                                       onClick={() => handleToggleSubfolder(repo.full_name, "issues")}
                                       className="flex items-center gap-2.5 py-1 px-2.5 hover:bg-[#2a2d2e] cursor-pointer text-gray-400 hover:text-white"
                                     >
@@ -341,6 +328,7 @@ export default function VSCodeSidebar({
                                             const isActive = activeTabId === `issue-${repo.full_name}-${issue.number}`;
                                             return (
                                               <div
+                                                data-testid={`sidebar-issue-${normalizeFullName(repo.full_name)}-${issue.number}`}
                                                 key={issue.number}
                                                 onClick={() => {
                                                   onSelectIssue(repo.owner.login, repo.name, issue);
@@ -379,6 +367,7 @@ export default function VSCodeSidebar({
                                   {/* Subfolder: PRs */}
                                   <div>
                                     <div
+                                      data-testid={`sidebar-subfolder-${normalizeFullName(repo.full_name)}-prs`}
                                       onClick={() => handleToggleSubfolder(repo.full_name, "prs")}
                                       className="flex items-center gap-2.5 py-1 px-2.5 hover:bg-[#2a2d2e] cursor-pointer text-gray-400 hover:text-white"
                                     >
@@ -402,6 +391,7 @@ export default function VSCodeSidebar({
                                             const isActive = activeTabId === `pr-${repo.full_name}-${pr.number}`;
                                             return (
                                               <div
+                                                data-testid={`sidebar-pr-${normalizeFullName(repo.full_name)}-${pr.number}`}
                                                 key={pr.number}
                                                 onClick={() => {
                                                   onSelectPR(repo.owner.login, repo.name, pr);
@@ -477,26 +467,8 @@ export default function VSCodeSidebar({
 
               {projectsExpanded && (
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 custom-scrollbar">
-                  <div className="p-1.5 border border-[#3e3e3e]/70 bg-[#1e1e1f] rounded space-y-1.5">
-                    <input
-                      value={newProjectName}
-                      onChange={(event) => setNewProjectName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          createProject();
-                        }
-                      }}
-                      placeholder="New project name"
-                      className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
-                    />
-                    <button
-                      type="button"
-                      onClick={createProject}
-                      className="w-full px-2 py-1 text-[11px] font-mono text-left bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
-                    >
-                      Create Project
-                    </button>
+                  <div className="px-2 py-1 text-[11px] text-gray-500 font-mono">
+                    Create topics from a repository menu, then manage them here.
                   </div>
                   {projectTags.length === 0 ? (
                     <div className="text-gray-500 italic px-6 py-2">No projects yet.</div>
@@ -571,6 +543,13 @@ export default function VSCodeSidebar({
                                 </div>
                               );
                             })}
+                            <button
+                              type="button"
+                              onClick={() => onDeleteProjectTag(tag.id)}
+                              className="w-full mt-1 px-2 py-1 text-left text-[10px] font-mono text-red-200 bg-[#3a1d1f] hover:bg-[#4a2327] rounded cursor-pointer"
+                            >
+                              Remove topic from all repos
+                            </button>
                           </div>
                         )}
                       </div>
