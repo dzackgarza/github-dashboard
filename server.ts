@@ -60,6 +60,10 @@ interface RepositoryFromApi {
   open_issues_count?: number;
 }
 
+interface RepositoryForWorkspace extends RepositoryFromApi {
+  latest_commit_at: string | null;
+}
+
 interface LabelFromApi {
   name: string;
   color: string;
@@ -100,20 +104,42 @@ interface PRFromApi {
   head: { sha: string; ref: string };
 }
 
-interface BranchFromApi {
+interface BranchHeadCommit {
   name: string;
   commit: {
     sha: string;
-    url: string;
+    date: string;
   };
 }
 
-interface CommitMetadataFromApi {
-  commit: {
-    committer: {
-      date?: string;
+interface GraphqlErrorFromApi {
+  message: string;
+}
+
+interface GraphqlEnvelope<T> {
+  data?: T;
+  errors?: GraphqlErrorFromApi[];
+}
+
+interface BranchRefsGraphqlData {
+  repository: {
+    refs: {
+      pageInfo: {
+        endCursor: string | null;
+        hasNextPage: boolean;
+      };
+      nodes: BranchRefFromGraphql[];
     };
-  };
+  } | null;
+}
+
+interface BranchRefFromGraphql {
+  name: string;
+  target: {
+    __typename: string;
+    oid?: string;
+    committedDate?: string;
+  } | null;
 }
 
 interface CommentFromApi {
@@ -212,7 +238,7 @@ async function githubFetch<T>(urlPath: string, etagKey?: string): Promise<{ data
   const url = `https://api.github.com${urlPath}`;
   const headers: Record<string, string> = {
     Accept: "application/vnd.github.v3+json",
-    Authorization: `token ${GITHUB_TOKEN}`,
+    Authorization: `Bearer ${GITHUB_TOKEN}`,
     "User-Agent": "GitHub-PR-Issue-Manager-Dashboard"
   };
 
@@ -243,7 +269,7 @@ async function githubWrite<T>(method: "PUT" | "DELETE", urlPath: string, body: u
     method,
     headers: {
       Accept: "application/vnd.github+json",
-      Authorization: `token ${GITHUB_TOKEN}`,
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
       "User-Agent": "GitHub-PR-Issue-Manager-Dashboard",
       "Content-Type": "application/json"
     },
@@ -262,6 +288,141 @@ async function githubWrite<T>(method: "PUT" | "DELETE", urlPath: string, body: u
     status: response.status,
     headers: response.headers
   };
+}
+
+async function githubGraphql<T>(query: string, variables: Record<string, string | null>): Promise<T> {
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      "User-Agent": "GitHub-PR-Issue-Manager-Dashboard",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const limit = response.headers.get("x-ratelimit-limit");
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const reset = response.headers.get("x-ratelimit-reset");
+  if (limit) globalRateLimit.limit = Number(limit);
+  if (remaining) globalRateLimit.remaining = Number(remaining);
+  if (reset) globalRateLimit.reset = Number(reset);
+
+  const payload = await response.json() as GraphqlEnvelope<T>;
+  if (!response.ok) {
+    throw new Error(`GitHub GraphQL request failed with status ${response.status}.`);
+  }
+  if (payload.errors && payload.errors.length > 0) {
+    throw new Error(`GitHub GraphQL request failed: ${payload.errors.map((error) => error.message).join("; ")}`);
+  }
+  assert(payload.data, "GitHub GraphQL response data is missing.");
+  return payload.data;
+}
+
+const BRANCH_HEADS_QUERY = `
+  query BranchHeads($owner: String!, $name: String!, $after: String) {
+    repository(owner: $owner, name: $name) {
+      refs(refPrefix: "refs/heads/", first: 100, after: $after) {
+        pageInfo {
+          endCursor
+          hasNextPage
+        }
+        nodes {
+          name
+          target {
+            __typename
+            ... on Commit {
+              oid
+              committedDate
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+async function fetchBranchHeadCommits(fullName: string): Promise<BranchHeadCommit[]> {
+  assertRepoFullName(fullName);
+  const [owner, name] = fullName.split("/");
+  let after: string | null = null;
+  const branches: BranchHeadCommit[] = [];
+
+  do {
+    const graphqlData: BranchRefsGraphqlData = await githubGraphql<BranchRefsGraphqlData>(BRANCH_HEADS_QUERY, { owner, name, after });
+    assert(graphqlData.repository, `GitHub repository ${fullName} was not found while reading branch heads.`);
+
+    for (const branch of graphqlData.repository.refs.nodes) {
+      assert(branch.target, `Branch ${branch.name} in ${fullName} has no target commit.`);
+      assert(branch.target.__typename === "Commit", `Branch ${branch.name} in ${fullName} does not point at a commit.`);
+      assert(typeof branch.target.oid === "string" && branch.target.oid.length > 0, `Branch ${branch.name} in ${fullName} is missing a commit oid.`);
+      assert(typeof branch.target.committedDate === "string" && branch.target.committedDate.length > 0, `Branch ${branch.name} in ${fullName} is missing a commit date.`);
+      branches.push({
+        name: branch.name,
+        commit: {
+          sha: branch.target.oid.slice(0, 8),
+          date: branch.target.committedDate
+        }
+      });
+    }
+
+    after = graphqlData.repository.refs.pageInfo.hasNextPage ? graphqlData.repository.refs.pageInfo.endCursor : null;
+  } while (after);
+
+  return branches;
+}
+
+function latestCommitTimestamp(branches: BranchHeadCommit[], fullName: string): string | null {
+  if (branches.length === 0) {
+    return null;
+  }
+
+  const timestamps = branches.map((branch) => {
+    const parsed = Date.parse(branch.commit.date);
+    assert(!Number.isNaN(parsed), `Branch ${branch.name} in ${fullName} has an invalid commit date.`);
+    return parsed;
+  });
+  return new Date(Math.max(...timestamps)).toISOString();
+}
+
+async function mapWithConcurrency<T, U>(items: T[], concurrency: number, transform: (item: T) => Promise<U>): Promise<U[]> {
+  assert(Number.isInteger(concurrency) && concurrency > 0, "Concurrency must be a positive integer.");
+  const results: Array<U | undefined> = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await transform(items[index]);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results.map((result, index) => {
+    assert(result !== undefined, `Concurrent mapper did not produce result ${index}.`);
+    return result;
+  });
+}
+
+async function normalizeRepositoriesForWorkspace(repos: RepositoryFromApi[]): Promise<RepositoryForWorkspace[]> {
+  const enriched = await mapWithConcurrency(repos, 4, async (repo) => {
+    const branchHeads = await fetchBranchHeadCommits(repo.full_name);
+    return {
+      ...repo,
+      latest_commit_at: latestCommitTimestamp(branchHeads, repo.full_name)
+    };
+  });
+
+  return enriched.sort((left, right) => {
+    const rightTime = right.latest_commit_at === null ? Number.NEGATIVE_INFINITY : Date.parse(right.latest_commit_at);
+    const leftTime = left.latest_commit_at === null ? Number.NEGATIVE_INFINITY : Date.parse(left.latest_commit_at);
+    assert(!Number.isNaN(rightTime), `${right.full_name} latest_commit_at is invalid.`);
+    assert(!Number.isNaN(leftTime), `${left.full_name} latest_commit_at is invalid.`);
+    return rightTime - leftTime || left.full_name.localeCompare(right.full_name);
+  });
 }
 
 function assertRepoFullName(value: unknown): asserts value is string {
@@ -336,7 +497,7 @@ app.get("/api/github/repos", async (_req, res) => {
 
     if (status === 304 && cached) {
       assert(Array.isArray(cached.data), "Cached repository data must be an array.");
-      const cachedRepos = cached.data as RepositoryFromApi[];
+      const cachedRepos = cached.data as RepositoryForWorkspace[];
       return res.json({
         repos: cachedRepos,
         projectTags: deriveProjectTagsFromRepos(cachedRepos),
@@ -347,16 +508,17 @@ app.get("/api/github/repos", async (_req, res) => {
 
     if (status === 200 && data) {
       assertArray<RepositoryFromApi>(data, "GitHub repository list must be an array.");
-      cacheCommit(cacheKey, data, headers);
+      const workspaceRepos = await normalizeRepositoriesForWorkspace(data);
+      cacheCommit(cacheKey, workspaceRepos, headers);
 
-      data.forEach((repo) => {
+      workspaceRepos.forEach((repo) => {
         syncTimestamps[repo.full_name] = new Date().toISOString();
       });
 
-      addLog("All Repos list", "SUCCESS", `Fetched ${data.length} repositories from live GitHub API. 1 API unit spent.`);
+      addLog("All Repos list", "SUCCESS", `Fetched ${workspaceRepos.length} repositories from live GitHub API with branch-head commit activity.`);
       return res.json({
-        repos: data,
-        projectTags: deriveProjectTagsFromRepos(data),
+        repos: workspaceRepos,
+        projectTags: deriveProjectTagsFromRepos(workspaceRepos),
         syncTimestamps,
         rateLimit: globalRateLimit
       });
@@ -485,52 +647,14 @@ app.get("/api/github/repos/:owner/:repo/branches", async (req, res) => {
   assertRepoFullName(fullName);
 
   const cacheKey = `branches-${fullName}`;
-  const cached = serverRepoCache[cacheKey];
 
   try {
-    const { data, status, headers } = await githubFetch<BranchFromApi[]>(`/repos/${fullName}/branches?per_page=30`, cacheKey);
-    let finalBranches: Array<{ name: string; commit: { sha: string; date: string } }> = [];
-
-    if (status === 304 && cached) {
-      assertArray<{ name: string; commit: { sha: string; date: string } }>(cached.data, "Cached branch data must be an array.");
-      finalBranches = cached.data;
-      return res.json(finalBranches);
-    }
-
-    if (status === 200 && data) {
-      assertArray<BranchFromApi>(data, "GitHub branch list must be an array.");
-
-      const enriched = await Promise.all(
-        data.map(async (branch, index) => {
-          const commitRef = branch.commit?.sha;
-          assert(typeof commitRef === "string" && commitRef.length > 0, `Branch ${branch.name} commit SHA is missing.`);
-          const commitRes = await githubFetch<CommitMetadataFromApi>(`/repos/${fullName}/commits/${commitRef}`);
-          if (commitRes.status !== 200 || !commitRes.data) {
-            throw new Error(`Commit metadata request for ${branch.name} failed with status ${commitRes.status}.`);
-          }
-
-          const commitDate = commitRes.data.commit?.committer?.date;
-          assert(typeof commitDate === "string" && commitDate.length > 0, `Commit metadata for ${branch.name} is missing committer date.`);
-
-          return {
-            name: branch.name,
-            commit: {
-              sha: commitRef.slice(0, 8),
-              date: commitDate
-            }
-          };
-        })
-      );
-
-      // Keep commit metadata query ordering deterministic by branch order.
-      // The branch ordering is still derived from the branch API first page.
-      finalBranches = enriched;
-      cacheCommit(cacheKey, finalBranches, headers);
-    } else {
-      addLog(fullName, "ERROR", `GitHub branches request failed with status ${status}.`);
-      return res.status(status).json({ error: `GitHub branches request failed with status ${status}.` });
-    }
-
+    const finalBranches = await fetchBranchHeadCommits(fullName);
+    serverRepoCache[cacheKey] = {
+      etag: "",
+      data: finalBranches,
+      lastSynced: new Date().toISOString()
+    };
     return res.json(finalBranches);
   } catch (err) {
     addLog(fullName, "ERROR", `Failed to fetch branches: ${String(err)}`);
@@ -646,7 +770,7 @@ app.post("/api/github/repos/:owner/:repo/issues/:number/comments", async (req, r
       method: "POST",
       headers: {
         Accept: "application/vnd.github.v3+json",
-        Authorization: `token ${GITHUB_TOKEN}`,
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
         "User-Agent": "GitHub-PR-Issue-Manager-Dashboard",
         "Content-Type": "application/json"
       },

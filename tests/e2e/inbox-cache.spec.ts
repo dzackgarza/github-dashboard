@@ -31,9 +31,20 @@ interface ProjectTag {
 }
 
 interface Repo {
+  name: string;
   full_name: string;
   html_url: string;
   updated_at: string;
+  latest_commit_at: string | null;
+  private: boolean;
+}
+
+interface BranchSummary {
+  name: string;
+  commit: {
+    sha: string;
+    date: string;
+  };
 }
 
 interface ApiIssueLike {
@@ -106,6 +117,31 @@ interface PRDetailsResponse {
   };
 }
 
+function parseTimestamp(label: string, value: string): number {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    throw new Error(`${label} is not a valid timestamp: ${value}`);
+  }
+  return parsed;
+}
+
+function sortableLatestCommit(repo: Repo): number {
+  if (repo.latest_commit_at === null) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parseTimestamp(`${repo.full_name} latest_commit_at`, repo.latest_commit_at);
+}
+
+function expectedLatestCommitOrder(repos: Repo[]): string[] {
+  return [...repos]
+    .sort((left, right) => {
+      const rightTime = sortableLatestCommit(right);
+      const leftTime = sortableLatestCommit(left);
+      return rightTime - leftTime || left.full_name.localeCompare(right.full_name);
+    })
+    .map((repo) => repo.full_name);
+}
+
 function isIssueListPath(pathname: string): boolean {
   return /^\/api\/github\/repos\/[^/]+\/[^/]+\/issues(?:\?.*)?$/.test(pathname);
 }
@@ -121,6 +157,98 @@ function isPullListPath(pathname: string): boolean {
 function isPullSinglePath(pathname: string): boolean {
   return /^\/api\/github\/repos\/[^/]+\/[^/]+\/prs\/\d+$/.test(pathname);
 }
+
+test("repos endpoint exposes latest branch-head commit activity and sorts newest first", async ({ request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  if (reposPayload.repos.length < 2) {
+    throw new Error("At least two live repositories are required to prove Explorer activity sorting.");
+  }
+
+  reposPayload.repos.forEach(sortableLatestCommit);
+
+  expect(reposPayload.repos.map((repo) => repo.full_name)).toEqual(expectedLatestCommitOrder(reposPayload.repos));
+
+  const witness = reposPayload.repos.find((repo) => repo.latest_commit_at !== null);
+  if (!witness) {
+    throw new Error("No live repository with branch-head commits was available to prove latest commit activity.");
+  }
+  const [owner, name] = witness.full_name.split("/");
+  const branchesPayload = await (await request.get(`/api/github/repos/${owner}/${name}/branches`)).json() as BranchSummary[];
+  if (branchesPayload.length === 0) {
+    throw new Error(`Repository ${witness.full_name} has no branches to prove latest commit activity.`);
+  }
+
+  const latestBranchHeadCommit = Math.max(
+    ...branchesPayload.map((branch) => parseTimestamp(`${witness.full_name}/${branch.name}`, branch.commit.date))
+  );
+  expect(sortableLatestCommit(witness)).toBe(latestBranchHeadCommit);
+});
+
+test("repository explorer cards use latest commit ordering and omit visibility labels", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  if (reposPayload.repos.length < 2) {
+    throw new Error("At least two live repositories are required to prove Explorer card ordering.");
+  }
+  const expectedNames = expectedLatestCommitOrder(reposPayload.repos)
+    .slice(0, Math.min(6, reposPayload.repos.length))
+    .map((fullName) => {
+      const repo = reposPayload.repos.find((item) => item.full_name === fullName);
+      if (!repo) {
+        throw new Error(`Expected repository ${fullName} was not present in the live repo payload.`);
+      }
+      return repo.name;
+    });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+  const explorerSurface = page.locator(".dockview-theme-abyss");
+  await expect(explorerSurface.getByText("Newest branch-head commits first")).toBeVisible();
+  await expect(explorerSurface.getByText(/\b(?:Private|Public)\b/)).toHaveCount(0);
+  await expect(explorerSurface.getByText(expectedNames[0], { exact: true })).toBeVisible();
+  await expect.poll(async () => explorerSurface.locator("h3").count()).toBeGreaterThanOrEqual(expectedNames.length);
+
+  const visibleCardNames = (await explorerSurface.locator("h3").allTextContents())
+    .map((text) => text.trim())
+    .filter(Boolean)
+    .slice(0, expectedNames.length);
+  expect(visibleCardNames).toEqual(expectedNames);
+});
+
+test("project mutation toasts show a spinner while the background topic write is running", async ({ page, request }) => {
+  const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const projectName = `e2e-toast-${Date.now()}`;
+  const projectTopic = normalizeProjectTopicName(projectName);
+  const projectRepo = reposResponse.repos[0].full_name;
+  let releaseTopicWrite: () => void = () => {};
+  const topicWriteGate = new Promise<void>((resolve) => {
+    releaseTopicWrite = resolve;
+  });
+
+  await page.route(/\/api\/github\/repos\/[^/]+\/[^/]+\/topics$/, async (route) => {
+    await topicWriteGate;
+    await route.continue();
+  });
+
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    await page.getByTestId(`sidebar-repo-${projectRepo.replace(/\//g, "-")}`).click({ button: "right" });
+    await page.getByTestId("context-create-project-input").fill(projectName);
+    await page.getByTestId("context-create-project-button").click();
+
+    const savingToast = page.getByText("Saving").locator("xpath=ancestor::div[contains(@class, 'border')][1]");
+    await expect(savingToast).toBeVisible();
+    await expect(savingToast.locator(".animate-spin")).toHaveCount(1);
+  } finally {
+    releaseTopicWrite();
+    await expect.poll(async () => {
+      const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+      return tags.some((tag) => tag.id === projectTopic);
+    }).toBe(true);
+    await request.delete(`/api/github/projects/${projectTopic}`);
+  }
+});
 
 async function discoverOpenPullRequest(request: APIRequestContext): Promise<OpenPRSelection | null> {
   const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
@@ -203,7 +331,7 @@ test("reopened Inbox renders cached items while live refresh is active", async (
 
   const reposPayload = await (await page.request.get("/api/github/repos")).json() as ReposResponse;
   const signature = reposPayload.repos
-    .map((repo) => `${repo.full_name}:${repo.updated_at}`)
+    .map((repo) => `${repo.full_name}:${repo.latest_commit_at}`)
     .sort()
     .join("|");
 

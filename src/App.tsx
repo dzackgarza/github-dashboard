@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Github } from "lucide-react";
+import { Github, RefreshCw } from "lucide-react";
 import VSCodeActivityBar from "./components/VSCodeActivityBar";
 import VSCodeSidebar from "./components/VSCodeSidebar";
 import WelcomeDashboard from "./components/WelcomeDashboard";
@@ -652,8 +652,15 @@ export default function App() {
                   : "border-[#3e3e3e] text-gray-200"
               }`}
             >
-              <div className="font-semibold leading-snug break-words">{notification.label}</div>
-              <div className="mt-1 text-[11px] text-gray-400 break-words">{notification.detail}</div>
+              <div className="flex items-start gap-2">
+                {notification.status === "queued" || notification.status === "saving" ? (
+                  <RefreshCw size={13} className="mt-0.5 shrink-0 animate-spin text-[#007acc]" />
+                ) : null}
+                <div className="min-w-0">
+                  <div className="font-semibold leading-snug break-words">{notification.label}</div>
+                  <div className="mt-1 text-[11px] text-gray-400 break-words">{notification.detail}</div>
+                </div>
+              </div>
             </div>
           ))}
         </div>

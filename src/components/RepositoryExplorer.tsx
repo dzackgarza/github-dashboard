@@ -5,7 +5,6 @@ import {
   GitPullRequest,
   AlertCircle,
   Clock,
-  ArrowUpDown,
   CircleDot,
   Fingerprint,
   RefreshCw,
@@ -13,8 +12,6 @@ import {
   X,
   ExternalLink,
   ChevronDown,
-  Lock,
-  Unlock,
   ChevronLeft,
   Calendar,
   Layers,
@@ -56,10 +53,8 @@ export default function RepositoryExplorer() {
     ? repos.filter((repo) => activeProjectDashboard.repos.includes(repo.full_name))
     : [];
 
-  // Search, Sort, Filter
+  // Search and project filtering
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<"name" | "issues" | "updated">("updated");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
 
   // Drag and drop visual cues
   const [draggedRepo, setDraggedRepo] = useState<string | null>(null);
@@ -150,22 +145,11 @@ export default function RepositoryExplorer() {
     return matchesQuery && matchesProject;
   });
 
-  // Sort repos
+  // Explorer is always ordered by latest branch-head commit activity.
   const sortedRepos = [...filteredRepos].sort((a, b) => {
-    let valueA: string | number = a.full_name;
-    let valueB: string | number = b.full_name;
-
-    if (sortBy === "issues") {
-      valueA = a.open_issues_count ?? 0;
-      valueB = b.open_issues_count ?? 0;
-    } else if (sortBy === "updated") {
-      valueA = new Date(a.updated_at).getTime();
-      valueB = new Date(b.updated_at).getTime();
-    }
-
-    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
-    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
-    return 0;
+    const latestB = b.latest_commit_at === null ? Number.NEGATIVE_INFINITY : new Date(b.latest_commit_at).getTime();
+    const latestA = a.latest_commit_at === null ? Number.NEGATIVE_INFINITY : new Date(a.latest_commit_at).getTime();
+    return latestB - latestA || a.full_name.localeCompare(b.full_name);
   });
 
   // HTML5 Core Drag & Drop handlers
@@ -241,8 +225,8 @@ export default function RepositoryExplorer() {
     }
   };
 
-  const formatDate = (isoString?: string) => {
-    if (!isoString) return "N/A";
+  const formatDate = (isoString?: string | null) => {
+    if (!isoString) return "No commits";
     return new Date(isoString).toLocaleDateString(undefined, {
       year: "numeric",
       month: "short",
@@ -250,8 +234,8 @@ export default function RepositoryExplorer() {
     });
   };
 
-  const formatRelativeTime = (isoString?: string) => {
-    if (!isoString) return "Never updated";
+  const formatRelativeTime = (isoString?: string | null) => {
+    if (!isoString) return "No commits";
     const diff = Date.now() - new Date(isoString).getTime();
     const sec = Math.floor(diff / 1000);
     const min = Math.floor(sec / 60);
@@ -339,15 +323,8 @@ export default function RepositoryExplorer() {
               {/* Brief stats overview list */}
               <div className="bg-[#1a1a1c] p-3 rounded.5 border border-[#3e3e3e]/40 space-y-2.5 text-[11px] font-mono">
                 <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Kind:</span>
-                  <span className="text-gray-300 flex items-center gap-1">
-                    {selectedRepo.private ? <Lock size={10} className="text-amber-500" /> : <Unlock size={10} className="text-emerald-500" />}
-                    {selectedRepo.private ? "Private" : "Public"}
-                  </span>
-                </div>
-                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Updated:</span>
-                  <span className="text-gray-400">{formatDate(selectedRepo.updated_at)}</span>
+                  <span className="text-gray-500">Latest commit:</span>
+                  <span className="text-gray-400">{formatDate(selectedRepo.latest_commit_at)}</span>
                 </div>
                 <div className="flex justify-between pt-0.5">
                   <span className="text-gray-500">Sync:</span>
@@ -726,15 +703,12 @@ export default function RepositoryExplorer() {
                           <span className="text-xs font-bold text-white tracking-tight break-all font-mono">
                             {repo.full_name}
                           </span>
-                          <span className="text-[9.5px] font-mono font-semibold text-gray-500 bg-gray-800/40 px-1.5 py-0.5 rounded leading-none border border-gray-800/30">
-                            {repo.private ? "Private" : "Public"}
-                          </span>
                         </div>
                         <p className="text-[11px] text-gray-400 leading-relaxed break-words">
                           {repo.description || "No repository description."}
                         </p>
                         <div className="flex flex-wrap gap-3 text-[10px] text-gray-500 font-mono">
-                          <span>Updated {formatRelativeTime(repo.updated_at)}</span>
+                          <span>Latest commit {formatRelativeTime(repo.latest_commit_at)}</span>
                           <span>Issues: {repo.open_issues_count ?? 0}</span>
                         </div>
                       </div>
@@ -809,26 +783,9 @@ export default function RepositoryExplorer() {
 
               </div>
 
-              {/* Right ordering criteria: Sort state directions */}
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-500 font-mono font-medium">Sort by:</span>
-              <select
-                className="bg-[#1a1a1c] border border-[#3e3e3e] text-xs text-white rounded p-1 font-mono hover:border-gray-500 outline-none"
-                value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as "name" | "issues" | "updated")}
-              >
-                  <option value="updated">Updated</option>
-                  <option value="name">Name</option>
-                  <option value="issues">Open issues</option>
-                </select>
-
-                <button
-                  onClick={() => setSortOrder(sortOrder === "asc" ? "desc" : "asc")}
-                  className="p-1 px-1.5 bg-[#1a1a1c] border border-[#3e3e3e] rounded hover:bg-[#2d2d2f] hover:border-gray-500 cursor-pointer text-white flex items-center transition-colors"
-                  title={`Ascending/Descending Toggle: ${sortOrder.toUpperCase()}`}
-                >
-                  <ArrowUpDown size={12} />
-                </button>
+              <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-mono">
+                <Clock size={12} />
+                <span>Newest branch-head commits first</span>
               </div>
             </div>
 
@@ -895,9 +852,6 @@ export default function RepositoryExplorer() {
                               </h3>
                             </div>
 
-                            <span className="text-[9.5px] font-mono font-semibold text-gray-500 bg-gray-800/40 px-1.5 py-0.5 rounded leading-none shrink-0 border border-gray-800/30">
-                              {repo.private ? "Private" : "Public"}
-                            </span>
                           </div>
 
                           {/* Descriptive blurb */}
@@ -928,7 +882,7 @@ export default function RepositoryExplorer() {
 
                             <div className="col-span-2 flex items-center gap-1 text-[9.5px] text-gray-500 mt-1">
                               <Clock size={10} className="shrink-0" />
-                              <span>Updated: <strong className="text-gray-400">{formatRelativeTime(repo.updated_at)}</strong></span>
+                              <span>Latest commit: <strong className="text-gray-400">{formatRelativeTime(repo.latest_commit_at)}</strong></span>
                             </div>
                           </div>
 

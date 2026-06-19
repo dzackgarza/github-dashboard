@@ -28,6 +28,7 @@ export interface Repo {
   language: string;
   owner: User;
   updated_at: string;
+  latest_commit_at: string | null;
   topics: string[];
   open_issues_count?: number;
 }

@@ -42,7 +42,7 @@ function getInboxCacheKey(login: string) {
 
 function getRepoSignature(repos: Repo[]) {
   return repos
-    .map((repo) => `${repo.full_name}:${repo.updated_at}`)
+    .map((repo) => `${repo.full_name}:${repo.latest_commit_at}`)
     .sort()
     .join("|");
 }
@@ -210,10 +210,6 @@ export default function WelcomeDashboard() {
     return repos.reduce((sum, r) => sum + (r.stargazers_count || 0), 0);
   }, [repos]);
 
-  const privateCount = useMemo(() => {
-    return repos.filter((r) => r.private).length;
-  }, [repos]);
-
   // Inbox filters
   const processedInboxItems = useMemo(() => {
     return activityItems.filter((item) => {
@@ -293,7 +289,7 @@ export default function WelcomeDashboard() {
             </div>
             <div className="text-xl font-bold text-white mt-1">{repos.length}</div>
             <div className="text-[10px] text-gray-500 mt-1 font-mono">
-              {privateCount} private repos • {repos.length - privateCount} public
+              Branch activity indexed
             </div>
           </button>
 

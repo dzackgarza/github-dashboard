@@ -132,7 +132,10 @@ export default function VSCodeSidebar({
   };
 
   // Helper relative time reporter
-  const formatTimeAgo = (isoString: string) => {
+  const formatTimeAgo = (isoString: string | null) => {
+    if (isoString === null) {
+      return "No commits";
+    }
     const diffMs = Date.now() - new Date(isoString).getTime();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
@@ -266,10 +269,9 @@ export default function VSCodeSidebar({
                                   {repo.full_name}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-gray-500">
-                                  <span title={`Updated ${repo.updated_at}`}>
-                                    Updated {formatTimeAgo(repo.updated_at)}
+                                  <span title={`Latest commit ${repo.latest_commit_at}`}>
+                                    Latest commit {formatTimeAgo(repo.latest_commit_at)}
                                   </span>
-                                  <span>{repo.private ? "Private" : "Public"}</span>
                                   {repoProjects.map((tag) => (
                                     <button
                                       key={tag.id}
