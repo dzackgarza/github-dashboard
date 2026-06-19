@@ -215,6 +215,140 @@ test("repository explorer cards use latest commit ordering and omit visibility l
   expect(visibleCardNames).toEqual(expectedNames);
 });
 
+test("repository and project navigation uses canonical dashboard actions and standard copy", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const targetRepo = reposPayload.repos.find((repo) => repo.latest_commit_at !== null) ?? reposPayload.repos[0];
+  if (!targetRepo) {
+    throw new Error("At least one live repository is required to prove repository navigation.");
+  }
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await page.getByRole("button", { name: /^Projects \d+/ }).click();
+  const explorerSurface = page.locator(".dockview-theme-abyss");
+  await expect(explorerSurface.getByTestId("projects-dashboard")).toBeVisible();
+  await expect(explorerSurface.getByTestId("project-card").first()).toBeVisible();
+  await expect(explorerSurface.getByTestId("repo-card").filter({ hasText: targetRepo.name })).toHaveCount(0);
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+  await expect(explorerSurface.getByPlaceholder("Search repositories")).toBeVisible();
+  await expect(explorerSurface.getByText("Fuzzy match / character subsequence")).toHaveCount(0);
+
+  const firstRepoCard = explorerSurface.locator("[data-testid='repo-card']").first();
+  await expect(firstRepoCard).toBeVisible();
+  await expect(firstRepoCard.getByRole("button", { name: /^Open repository dashboard/ })).toBeVisible();
+  await expect(firstRepoCard.getByRole("img")).toHaveCount(0);
+
+  await firstRepoCard.getByRole("button", { name: /^Open repository dashboard/ }).click();
+  await expect(explorerSurface.getByText("Last updated:")).toBeVisible();
+  await expect(explorerSurface.getByText("Sync:")).toHaveCount(0);
+  await expect(explorerSurface.getByText("Pull Request Branches")).toHaveCount(0);
+  await expect(explorerSurface.getByText("Active Branches")).toHaveCount(0);
+  await expect(explorerSurface.getByText(/^PRs \(/)).toBeVisible();
+  await expect(explorerSurface.getByText(/^Branches \(/)).toBeVisible();
+});
+
+test("sidebar context menus own tree actions and topic deletion", async ({ page, request }) => {
+  const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const projectName = `e2e-sidebar-menu-${Date.now()}`;
+  const projectTopic = normalizeProjectTopicName(projectName);
+  const projectRepo = reposResponse.repos[0]?.full_name;
+  if (!projectRepo) {
+    throw new Error("At least one live repository is required to prove sidebar context menus.");
+  }
+  let projectCreated = false;
+
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+    await expect(page.getByTestId("sidebar-all-repos-header")).toBeVisible();
+    await page.getByTestId("sidebar-all-repos-header").click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Open Repositories Dashboard" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Expand all repos" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Collapse all repos" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitem", { name: "Open Repositories Dashboard" })).toHaveCount(0);
+
+    const normalizedProjectRepo = projectRepo.replace(/\//g, "-");
+    await page.getByTestId(`sidebar-repo-${normalizedProjectRepo}`).click({ button: "right" });
+    await page.getByTestId("context-create-project-input").fill(projectName);
+    await page.getByTestId("context-create-project-button").click();
+    await expect.poll(async () => {
+      const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+      return tags.some((tag) => tag.id === projectTopic);
+    }, { timeout: 30_000 }).toBe(true);
+    projectCreated = true;
+
+    await expect(page.getByTestId("sidebar-projects-header")).toBeVisible();
+    await page.getByTestId("sidebar-projects-header").click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Open Projects Dashboard" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Expand all projects" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Collapse all projects" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    const projectRow = page.getByTestId(`sidebar-project-${projectTopic}`);
+    await expect(projectRow).toBeVisible({ timeout: 30_000 });
+    await projectRow.scrollIntoViewIfNeeded();
+    await projectRow.click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Remove topic from all repos" })).toBeVisible();
+    await expect(page.locator("text=Create topics from a repository menu")).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "Remove topic from all repos" }).click();
+    await expect.poll(async () => {
+      const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
+      return tags.some((tag) => tag.id === projectTopic);
+    }, { timeout: 30_000 }).toBe(false);
+    projectCreated = false;
+  } finally {
+    if (projectCreated) {
+      await request.delete(`/api/github/projects/${projectTopic}`);
+    }
+  }
+});
+
+test("inbox exposes label filtering without redundant open-state or avatar chrome", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  let labelFixture: { label: string; title: string } | null = null;
+
+  for (const repo of reposPayload.repos) {
+    const [owner, name] = repo.full_name.split("/");
+    const issuesPayload = await (await request.get(`/api/github/repos/${owner}/${name}/issues`)).json() as ApiIssueLike[] | { error: string };
+    if (Array.isArray(issuesPayload)) {
+      const labeledIssue = issuesPayload.find((issue) => issue.labels.length > 0);
+      if (labeledIssue) {
+        labelFixture = { label: labeledIssue.labels[0].name, title: labeledIssue.title };
+        break;
+      }
+    }
+
+    const prsPayload = await (await request.get(`/api/github/repos/${owner}/${name}/prs`)).json() as ApiPullRequest[] | { error: string };
+    if (Array.isArray(prsPayload)) {
+      const labeledPr = prsPayload.find((pr) => pr.labels.length > 0);
+      if (labeledPr) {
+        labelFixture = { label: labeledPr.labels[0].name, title: labeledPr.title };
+        break;
+      }
+    }
+  }
+
+  if (!labelFixture) {
+    throw new Error("No live labeled issue or PR found to prove Inbox label filtering.");
+  }
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.getByTestId("github-user-avatar")).toHaveCount(0);
+  await expect(page.getByText("Open Issues")).toHaveCount(0);
+  await expect(page.getByText("Open PRs")).toHaveCount(0);
+
+  const labelFilter = page.getByTestId("inbox-label-filter");
+  await expect(labelFilter).toBeVisible();
+  await labelFilter.selectOption(labelFixture.label);
+  await expect(page.getByText(labelFixture.title).first()).toBeVisible();
+  await expect(page.getByText(/^Showing \d+ items$/)).toBeVisible();
+});
+
 test("project mutation toasts show a spinner while the background topic write is running", async ({ page, request }) => {
   const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
   const projectName = `e2e-toast-${Date.now()}`;
@@ -245,7 +379,7 @@ test("project mutation toasts show a spinner while the background topic write is
     await expect.poll(async () => {
       const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
       return tags.some((tag) => tag.id === projectTopic);
-    }).toBe(true);
+    }, { timeout: 45_000 }).toBe(true);
     await request.delete(`/api/github/projects/${projectTopic}`);
   }
 });
@@ -438,7 +572,7 @@ test("real PR detail layout can be resized without obscuring security sidebar", 
   const normalizedRepo = selectedPR.fullName.replace(/\//g, "-");
   const repoRow = page.getByTestId(`sidebar-repo-${normalizedRepo}`);
   await expect(repoRow).toBeVisible();
-  await repoRow.click();
+  await repoRow.click({ position: { x: 8, y: 8 } });
 
   const prSubfolderRow = page.getByTestId(`sidebar-subfolder-${normalizedRepo}-prs`);
   await prSubfolderRow.scrollIntoViewIfNeeded();
@@ -446,7 +580,7 @@ test("real PR detail layout can be resized without obscuring security sidebar", 
   await prSubfolderRow.click();
 
   const prRow = page.getByTestId(`sidebar-pr-${normalizedRepo}-${selectedPR.number}`);
-  await expect(prRow).toBeVisible();
+  await expect(prRow).toBeVisible({ timeout: 45_000 });
   await prRow.click();
 
   const leftPanel = page.getByTestId("pr-detail-main-panel");
@@ -550,7 +684,7 @@ test("issue and PR detail views load summary from single-item endpoints", async 
   const issueRepo = selectedIssue.fullName.replace(/\//g, "-");
   const issueRepoRow = page.getByTestId(`sidebar-repo-${issueRepo}`);
   await expect(issueRepoRow).toBeVisible();
-  await issueRepoRow.click();
+  await issueRepoRow.click({ position: { x: 8, y: 8 } });
 
   await page.getByTestId(`sidebar-subfolder-${issueRepo}-issues`).click();
   calls.issueList = 0;
@@ -569,7 +703,7 @@ test("issue and PR detail views load summary from single-item endpoints", async 
 
   const prRepo = selectedPR.fullName.replace(/\//g, "-");
   const prRepoRow = page.getByTestId(`sidebar-repo-${prRepo}`);
-  await prRepoRow.click();
+  await prRepoRow.click({ position: { x: 8, y: 8 } });
   await page.getByTestId(`sidebar-subfolder-${prRepo}-prs`).click();
 
   calls.issueList = 0;
@@ -658,15 +792,19 @@ test("opening a project dashboard does not apply the explorer project filter", a
 });
 
 test("repo right-click menu can create a project containing that repo", async ({ page, request }) => {
-  const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
   const projectName = `e2e-context-${Date.now()}`;
   const projectTopic = normalizeProjectTopicName(projectName);
-  const projectRepo = reposResponse.repos[0].full_name;
-  const projectRepoUrl = reposResponse.repos[0].html_url;
 
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    const firstRepoRow = page.locator("[data-testid^='sidebar-repo-']").first();
+    await expect(firstRepoRow).toBeVisible();
+    const projectRepo = await firstRepoRow.locator("[title^='dzackgarza/']").first().getAttribute("title");
+    if (!projectRepo) {
+      throw new Error("Visible sidebar repository row did not expose a full repository name.");
+    }
+    const projectRepoUrl = `https://github.com/${projectRepo}`;
     const normalizedProjectRepo = projectRepo.replace(/\//g, "-");
     await page.getByTestId(`sidebar-repo-${normalizedProjectRepo}`).click({ button: "right" });
     await expect(page.getByTestId("context-open-github")).toHaveAttribute("href", projectRepoUrl);

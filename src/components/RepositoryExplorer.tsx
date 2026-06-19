@@ -22,7 +22,17 @@ import MarkdownViewer from "./MarkdownViewer";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { toMarkdownExcerpt } from "../utils/markdownExcerpt";
 
-export default function RepositoryExplorer() {
+export interface RepositoryExplorerPanelParams {
+  explorerMode?: "repositories" | "projects" | "repo" | "project";
+  repoFullName?: string;
+  projectId?: string;
+}
+
+interface RepositoryExplorerProps {
+  panelParams?: RepositoryExplorerPanelParams;
+}
+
+export default function RepositoryExplorer({ panelParams }: RepositoryExplorerProps) {
   const {
     repos,
     projectTags,
@@ -42,12 +52,16 @@ export default function RepositoryExplorer() {
   } = useWorkspace();
 
   const onSelectProjectFilter = setSelectedProjectFilter;
-  const selectedRepo = repos.find((repo) => repo.full_name === activeRepoFullName) || null;
-  const activeProjectDashboard = activeProjectDashboardId
-    ? projectTags.find((project) => project.id === activeProjectDashboardId)
+  const panelMode = panelParams?.explorerMode;
+  const selectedRepoFullName = panelMode === "repo" ? panelParams?.repoFullName : activeRepoFullName;
+  const selectedProjectId = panelMode === "project" ? panelParams?.projectId : activeProjectDashboardId;
+  const showProjectsOverview = panelMode === "projects";
+  const selectedRepo = selectedRepoFullName ? repos.find((repo) => repo.full_name === selectedRepoFullName) || null : null;
+  const activeProjectDashboard = selectedProjectId
+    ? projectTags.find((project) => project.id === selectedProjectId)
     : null;
-  if (activeProjectDashboardId && !activeProjectDashboard) {
-    throw new Error(`Project ${activeProjectDashboardId} was not found.`);
+  if (selectedProjectId && !activeProjectDashboard) {
+    throw new Error(`Project ${selectedProjectId} was not found.`);
   }
   const activeProjectRepos = activeProjectDashboard
     ? repos.filter((repo) => activeProjectDashboard.repos.includes(repo.full_name))
@@ -61,8 +75,6 @@ export default function RepositoryExplorer() {
   const [activeDragOverProjId, setActiveDragOverProjId] = useState<string | null>(null);
   const [isDragOverTrash, setIsDragOverTrash] = useState(false);
 
-  // Dashboard Tab selection inside repo dashboard
-  const [dashTab, setDashTab] = useState<"issues" | "prs" | "branches">("issues");
   const [branches, setBranches] = useState<{ name: string; commit: { sha: string; date: string } }[]>([]);
   const [dashIssues, setDashIssues] = useState<Issue[]>([]);
   const [dashPRs, setDashPRs] = useState<PullRequest[]>([]);
@@ -73,6 +85,24 @@ export default function RepositoryExplorer() {
   const pressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [touchMenuRepo, setTouchMenuRepo] = useState<Repo | null>(null);
   const [touchMenuPos, setTouchMenuPos] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const closeMenu = () => {
+      setTouchMenuRepo(null);
+      setTouchMenuPos(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+    window.addEventListener("click", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
 
   const colors = [
     { value: "#3b82f6", name: "Blue" },
@@ -86,11 +116,13 @@ export default function RepositoryExplorer() {
   ];
 
   // Load Dashboard Data once a Repo is selected
-  useEffect(() => {
-    if (selectedRepo) {
-      setLoadingDashboard(true);
-      setDashTab("issues");
-      const { owner, name } = selectedRepo;
+	  useEffect(() => {
+	    if (selectedRepo) {
+	      setLoadingDashboard(true);
+	      setDashIssues([]);
+	      setDashPRs([]);
+	      setBranches([]);
+	      const { owner, name } = selectedRepo;
       const fullName = selectedRepo.full_name;
 
       Promise.all([
@@ -287,7 +319,7 @@ export default function RepositoryExplorer() {
             <div className="flex items-center gap-2">
               <FolderGit2 className="text-[#007acc]" size={18} />
               <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
-                Repositories
+                {showProjectsOverview ? "Projects" : "Repositories"}
               </h2>
             </div>
           )}
@@ -304,19 +336,15 @@ export default function RepositoryExplorer() {
           {/* Dashboard Left Side Metadata Frame */}
           <div className="w-80 border-r border-[#3e3e3e] bg-[#222224] p-5 flex flex-col justify-between overflow-y-auto select-none">
             <div className="space-y-6">
-              {/* Repo core logo banner */}
               <div className="flex items-start gap-3">
-                <img
-                  src={selectedRepo.owner.avatar_url}
-                  alt={selectedRepo.owner.login}
-                  className="w-12 h-12 rounded border border-[#3e3e3e] shadow-md shrink-0"
-                  referrerPolicy="no-referrer"
-                />
+                <div className="w-12 h-12 rounded border border-[#3e3e3e] bg-[#1a1a1c] shadow-md shrink-0 flex items-center justify-center">
+                  <FolderGit2 size={22} className="text-[#007acc]" />
+                </div>
                 <div className="min-w-0">
                   <h3 className="font-bold text-white text-sm tracking-tight leading-snug break-all">
                     {selectedRepo.name}
                   </h3>
-                  <p className="text-xs text-gray-500 font-mono">@{selectedRepo.owner.login}</p>
+                  <p className="text-xs text-gray-500 font-mono">{selectedRepo.full_name}</p>
                 </div>
               </div>
 
@@ -327,12 +355,15 @@ export default function RepositoryExplorer() {
                   <span className="text-gray-400">{formatDate(selectedRepo.latest_commit_at)}</span>
                 </div>
                 <div className="flex justify-between pt-0.5">
-                  <span className="text-gray-500">Sync:</span>
+                  <span className="text-gray-500">Last updated:</span>
                   <span className="text-emerald-400 font-semibold flex items-center gap-1">
                     {isSyncing[selectedRepo.full_name] ? (
-                      <RefreshCw size={9} className="animate-spin" />
+                      <>
+                        <RefreshCw size={9} className="animate-spin" />
+                        Updating
+                      </>
                     ) : (
-                      "Polled"
+                      formatRelativeTime(selectedRepo.latest_commit_at)
                     )}
                   </span>
                 </div>
@@ -426,75 +457,38 @@ export default function RepositoryExplorer() {
 
           </div>
 
-          {/* Detailed Lists tabs content right pane */}
-          <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1f]">
-            {/* Inner top Tab navigation selection bar */}
-            <div className="h-10 bg-[#252526] border-b border-[#3e3e3e] px-4 flex items-center gap-1.5 shrink-0 select-none">
-              <button
-                onClick={() => setDashTab("issues")}
-                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
-                  dashTab === "issues" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                <AlertCircle size={13} className="text-emerald-500" />
-                <span>Issues & Tickets ({dashIssues.length})</span>
-              </button>
-
-              <button
-                onClick={() => setDashTab("prs")}
-                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
-                  dashTab === "prs" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                <GitPullRequest size={13} className="text-purple-400" />
-                <span>Pull Request Branches ({dashPRs.length})</span>
-              </button>
-
-              <button
-                onClick={() => setDashTab("branches")}
-                className={`h-full px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 relative ${
-                  dashTab === "branches" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                <GitBranch size={13} className="text-blue-400" />
-                <span>Active Branches ({branches.length})</span>
-              </button>
-            </div>
-
-            {/* List Body items container */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 select-text custom-scrollbar">
-              {loadingDashboard ? (
-                <div className="h-64 flex flex-col items-center justify-center text-gray-500 gap-2.5">
-                  <RefreshCw className="animate-spin text-[#007acc]" size={24} />
-                  <span className="text-xs font-mono">Extracting repository specifications from conditional sync...</span>
-                </div>
-              ) : (
-                <>
-                  {/* TAB 1: ISSUES LIST */}
-                  {dashTab === "issues" && (
-                    <div className="space-y-3">
-                      {dashIssues.length === 0 ? (
-                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
-                          <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
-                          <p className="text-xs font-mono">No open development tickets registered.</p>
-                        </div>
-                      ) : (
-                        dashIssues.map((issue) => (
-                          <div
-                            key={issue.number}
-                            onClick={() => openTabs(`issue-${selectedRepo.full_name}-${issue.number}`, "issue", `Issue #${issue.number}`, selectedRepo.owner.login, selectedRepo.name, issue.number)}
-                            className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
-                          >
-                            <div className="space-y-1.5 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded font-bold uppercase leading-none ${
-                                  issue.state === "open" ? "bg-emerald-950/60 text-emerald-400 border border-emerald-900" : "bg-gray-800 text-gray-400"
-                                }`}>
-                                  {issue.state}
-                                </span>
-                                <span className="text-xs font-bold text-white tracking-tight break-words">
-                                  {issue.title}
-                                </span>
+	          {/* Detailed Lists content right pane */}
+	          <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1f]">
+	            <div className="flex-1 overflow-y-auto p-6 space-y-7 select-text custom-scrollbar">
+		              {loadingDashboard && (
+		                <div className="flex items-center gap-2 rounded border border-[#3e3e3e]/70 bg-[#222224] px-3 py-2 text-xs text-gray-400 font-mono">
+		                  <RefreshCw className="animate-spin text-[#007acc]" size={14} />
+		                  <span>Loading repository dashboard...</span>
+		                </div>
+		              )}
+		              <>
+	                  <section className="space-y-3">
+	                    <div className="flex items-center gap-2 border-b border-[#3e3e3e] pb-2">
+	                      <AlertCircle size={14} className="text-emerald-500" />
+	                      <h3 className="text-xs font-mono font-bold text-white">Issues ({dashIssues.length})</h3>
+	                    </div>
+	                      {dashIssues.length === 0 ? (
+	                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+	                          <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
+	                          <p className="text-xs font-mono">No issues found.</p>
+	                        </div>
+	                      ) : (
+	                        dashIssues.map((issue) => (
+	                          <div
+	                            key={issue.number}
+	                            onClick={() => openTabs(`issue-${selectedRepo.full_name}-${issue.number}`, "issue", `Issue #${issue.number}`, selectedRepo.owner.login, selectedRepo.name, issue.number)}
+	                            className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
+	                          >
+	                            <div className="space-y-1.5 min-w-0">
+	                              <div className="flex items-center gap-2 flex-wrap">
+	                                <span className="text-xs font-bold text-white tracking-tight break-words">
+	                                  {issue.title}
+	                                </span>
                                 <span className="text-[10px] text-gray-500 font-mono">#{issue.number}</span>
                               </div>
 
@@ -526,40 +520,37 @@ export default function RepositoryExplorer() {
 
                             <div className="shrink-0 flex flex-col items-end gap-1.5">
                               <span className="text-[10px] text-gray-500 font-mono">Comments: {typeof issue.comments === "number" ? issue.comments : issue.comments?.length ?? 0}</span>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  )}
-
-                  {/* TAB 2: PULL REQUESTS */}
-                  {dashTab === "prs" && (
-                    <div className="space-y-3">
-                      {dashPRs.length === 0 ? (
-                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
-                          <GitPullRequest size={20} className="mx-auto text-gray-600 mb-2 animate-bounce" />
-                          <p className="text-xs font-mono">No awaiting pull request reviews found.</p>
-                        </div>
-                      ) : (
-                        dashPRs.map((pr) => {
-                          const stateColor = pr.state === "open" ? "text-emerald-400 bg-emerald-950/40 border-emerald-900" : "text-purple-400 bg-purple-950/40 border-purple-900";
-                          const ciState = pr.ci_status?.state || "pending";
-                          
-                          return (
+	                            </div>
+	                          </div>
+	                        ))
+	                      )}
+	                  </section>
+	
+	                  <section className="space-y-3">
+	                    <div className="flex items-center gap-2 border-b border-[#3e3e3e] pb-2">
+	                      <GitPullRequest size={14} className="text-purple-400" />
+	                      <h3 className="text-xs font-mono font-bold text-white">PRs ({dashPRs.length})</h3>
+	                    </div>
+	                      {dashPRs.length === 0 ? (
+	                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+	                          <GitPullRequest size={20} className="mx-auto text-gray-600 mb-2 animate-bounce" />
+	                          <p className="text-xs font-mono">No PRs found.</p>
+	                        </div>
+	                      ) : (
+	                        dashPRs.map((pr) => {
+	                          const ciState = pr.ci_status?.state || "pending";
+	                          
+	                          return (
                             <div
                               key={pr.number}
                               onClick={() => openTabs(`pr-${selectedRepo.full_name}-${pr.number}`, "pr", `PR #${pr.number}`, selectedRepo.owner.login, selectedRepo.name, pr.number)}
                               className="p-4 rounded bg-[#252526] border border-[#3e3e3e]/80 hover:border-gray-500 cursor-pointer transition-colors flex items-start justify-between gap-4"
-                            >
-                              <div className="space-y-1.5 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className={`text-[9.5px] font-mono px-2 py-0.5 rounded border font-bold uppercase leading-none ${stateColor}`}>
-                                    {pr.state}
-                                  </span>
-                                  <span className="text-xs font-bold text-white tracking-tight break-words">
-                                    {pr.title}
-                                  </span>
+	                            >
+	                              <div className="space-y-1.5 min-w-0">
+	                                <div className="flex items-center gap-2 flex-wrap">
+	                                  <span className="text-xs font-bold text-white tracking-tight break-words">
+	                                    {pr.title}
+	                                  </span>
                                   <span className="text-[10px] text-gray-500 font-mono">#{pr.number}</span>
                                 </div>
 
@@ -595,18 +586,20 @@ export default function RepositoryExplorer() {
                                 <span className="text-gray-500 text-[9.5px]">Comments: {typeof pr.comments === "number" ? pr.comments : pr.comments?.length ?? 0}</span>
                               </div>
                             </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-
-                  {/* TAB 3: ACTIVE BRANCHES */}
-                  {dashTab === "branches" && (
-                    <div className="space-y-2.5">
-                      {branches.map((b) => (
-                        <div
-                          key={b.name}
+	                          );
+	                        })
+	                      )}
+	                  </section>
+	
+	                  <section className="space-y-3">
+	                    <div className="flex items-center gap-2 border-b border-[#3e3e3e] pb-2">
+	                      <GitBranch size={14} className="text-blue-400" />
+	                      <h3 className="text-xs font-mono font-bold text-white">Branches ({branches.length})</h3>
+	                    </div>
+	                    <div className="space-y-2.5">
+	                      {branches.map((b) => (
+	                        <div
+	                          key={b.name}
                           className="p-3.5 rounded bg-[#252526] border border-[#3e3e3e]/80 flex items-center justify-between group select-none"
                         >
                           <div className="flex items-center gap-3 min-w-0">
@@ -623,25 +616,82 @@ export default function RepositoryExplorer() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-4 font-mono text-[11px] text-gray-400">
-                            <span className="flex items-center gap-1">
-                              <Clock size={11} className="text-gray-500" />
-                              Pushed {formatRelativeTime(b.commit.date)}
-                            </span>
-                            <span className="px-2 py-0.5 bg-gray-800 text-[10px] text-gray-400 rounded border border-transparent group-hover:border-gray-600 select-none">
-                              HEAD synced
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+	                          <div className="flex items-center gap-4 font-mono text-[11px] text-gray-400">
+	                            <span className="flex items-center gap-1">
+	                              <Clock size={11} className="text-gray-500" />
+	                              Pushed {formatRelativeTime(b.commit.date)}
+	                            </span>
+	                          </div>
+	                        </div>
+	                      ))}
+	                    </div>
+	                  </section>
+		              </>
+	            </div>
           </div>
         </div>
-      ) : activeProjectDashboard ? (
+	      ) : showProjectsOverview ? (
+	        <div data-testid="projects-dashboard" className="flex-1 flex min-h-0 overflow-hidden bg-[#141416]">
+	          <div className="flex-1 flex flex-col min-h-0 bg-[#161619]">
+	            <div className="p-4 border-b border-[#3e3e3e] bg-[#222224] flex items-center justify-between gap-4 select-none shrink-0">
+	              <div className="flex items-center gap-2">
+	                <Layers size={16} className="text-[#007acc]" />
+	                <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Projects</h3>
+	              </div>
+	              <span className="text-[10px] text-gray-500 font-mono">{projectTags.length} topics</span>
+	            </div>
+	            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar">
+	              {projectTags.length === 0 ? (
+	                <div className="h-full flex flex-col items-center justify-center text-gray-500">
+	                  <Layers size={28} className="text-gray-600 mb-3" />
+	                  <p className="text-xs font-mono">No projects found.</p>
+	                </div>
+	              ) : (
+	                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4.5">
+	                  {projectTags.map((project) => {
+	                    const projectRepos = repos.filter((repo) => project.repos.includes(repo.full_name));
+	                    const issueCount = projectRepos.reduce((total, repo) => total + (repo.open_issues_count ?? 0), 0);
+	                    return (
+	                      <div
+	                        key={project.id}
+	                        data-testid="project-card"
+	                        className="bg-[#222224] border border-[#3e3e3e]/80 rounded p-4 flex flex-col gap-3 shadow"
+	                      >
+	                        <div className="flex items-start justify-between gap-3">
+	                          <div className="min-w-0">
+	                            <div className="flex items-center gap-2">
+	                              <span
+	                                className="w-2.5 h-2.5 rounded-full shrink-0 border border-black/20"
+	                                style={{ backgroundColor: project.color }}
+	                              />
+	                              <h4 className="font-bold text-xs text-white break-words font-mono leading-snug">
+	                                {project.name}
+	                              </h4>
+	                            </div>
+	                            <div className="mt-2 flex flex-wrap gap-3 text-[10px] text-gray-500 font-mono">
+	                              <span>Repos: <strong className="text-gray-300">{projectRepos.length}</strong></span>
+	                              <span>Issues: <strong className="text-gray-300">{issueCount}</strong></span>
+	                            </div>
+	                          </div>
+	                        </div>
+	                        <div className="mt-auto flex items-center gap-2 pt-2 border-t border-[#3e3e3e]/60">
+	                          <button
+	                            type="button"
+	                            onClick={() => openProject(project.id)}
+	                            className="px-2.5 py-1 rounded bg-[#094771] hover:bg-[#0e5f95] text-white text-[10px] font-mono font-semibold"
+	                          >
+	                            Open project dashboard
+	                          </button>
+	                        </div>
+	                      </div>
+	                    );
+	                  })}
+	                </div>
+	              )}
+	            </div>
+	          </div>
+	        </div>
+	      ) : activeProjectDashboard ? (
         <div data-testid="project-dashboard" className="flex-1 flex min-h-0 overflow-hidden bg-[#18181a]">
           <div className="w-80 border-r border-[#3e3e3e] bg-[#222224] p-5 overflow-y-auto select-none">
             <div className="space-y-5">
@@ -663,8 +713,8 @@ export default function RepositoryExplorer() {
                   <span className="text-gray-500">Repositories:</span>
                   <span className="text-gray-300">{activeProjectRepos.length}</span>
                 </div>
-                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
-                  <span className="text-gray-500">Open issues:</span>
+	                <div className="flex justify-between border-b border-[#2a2a2c] pb-1.5">
+	                  <span className="text-gray-500">Issues:</span>
                   <span className="text-gray-300">
                     {activeProjectRepos.reduce((total, repo) => total + (repo.open_issues_count ?? 0), 0)}
                   </span>
@@ -764,12 +814,12 @@ export default function RepositoryExplorer() {
 
                 <div className="flex-1 max-w-sm flex items-center gap-2 border border-[#3e3e3e] bg-[#1a1a1c] px-3 py-1.5 text-xs text-white rounded focus-within:border-[#007acc] transition-colors relative">
                   <Search size={13} className="text-gray-500 shrink-0" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Fuzzy match / character subsequence..."
-                    className="w-full bg-transparent outline-none placeholder-gray-600 font-mono"
+	                  <input
+	                    type="text"
+	                    value={searchQuery}
+	                    onChange={(e) => setSearchQuery(e.target.value)}
+	                    placeholder="Search repositories"
+	                    className="w-full bg-transparent outline-none placeholder-gray-600 font-mono"
                   />
                   {searchQuery && (
                     <button
@@ -795,12 +845,12 @@ export default function RepositoryExplorer() {
                 <Inbox size={32} className="text-gray-600 mb-3" />
                 <p className="text-xs font-mono">No matching repository index matches current filter parameters.</p>
                 {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery("")}
-                    className="text-[#007acc] hover:underline text-xs mt-2 font-mono cursor-pointer"
-                  >
-                    Reset fuzzy search terms
-                  </button>
+	                  <button
+	                    onClick={() => setSearchQuery("")}
+	                    className="text-[#007acc] hover:underline text-xs mt-2 font-mono cursor-pointer"
+	                  >
+	                    Clear search
+	                  </button>
                 )}
               </div>
             ) : (
@@ -812,25 +862,20 @@ export default function RepositoryExplorer() {
                     const isDragged = draggedRepo === repo.full_name;
                     
                     return (
-                      <div
-                        key={repo.id}
-                        draggable={true}
-                        onDragStart={(e) => handleDragStart(e, repo.full_name)}
-                        onDragEnd={handleDragEnd}
-                        onClick={(e) => {
-                          if ((e.target as HTMLElement).closest("button")) {
-                            return;
-                          }
-                          openRepo(repo.full_name);
-                        }}
-                        onTouchStart={(e) => handleTouchStart(e, repo)}
-                        onTouchEnd={handleTouchEnd}
+	                      <div
+	                        key={repo.id}
+	                        data-testid="repo-card"
+	                        draggable={true}
+	                        onDragStart={(e) => handleDragStart(e, repo.full_name)}
+	                        onDragEnd={handleDragEnd}
+	                        onTouchStart={(e) => handleTouchStart(e, repo)}
+	                        onTouchEnd={handleTouchEnd}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           setTouchMenuRepo(repo);
                           setTouchMenuPos({ x: e.clientX, y: e.clientY });
                         }}
-                        className={`bg-[#222224] border rounded p-4 flex flex-col justify-between gap-4 shadow transition-all cursor-pointer active:cursor-grabbing relative overflow-hidden select-none hover:shadow-md ${
+	                        className={`bg-[#222224] border rounded p-4 flex flex-col justify-between gap-4 shadow transition-all active:cursor-grabbing relative overflow-hidden select-none hover:shadow-md ${
                           isDragged
                             ? "opacity-40 border-dashed border-amber-500 bg-[#3a2010]"
                             : "border-[#3e3e3e]/80 hover:border-gray-500"
@@ -839,16 +884,13 @@ export default function RepositoryExplorer() {
                         {/* Main info card body */}
                         <div className="space-y-2.5">
                           {/* Title with metadata lock indicator */}
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <img
-                                src={repo.owner.avatar_url}
-                                alt={repo.owner.login}
-                                className="w-5.5 h-5.5 rounded bg-gray-800 border border-gray-700 shrink-0"
-                                referrerPolicy="no-referrer"
-                              />
-                              <h3 className="font-bold text-xs text-white break-all font-mono leading-none tracking-tight">
-                                {repo.name}
+	                          <div className="flex items-start justify-between gap-2">
+	                            <div className="flex items-center gap-2 min-w-0">
+	                              <span className="w-5.5 h-5.5 rounded bg-gray-800 border border-gray-700 shrink-0 flex items-center justify-center">
+	                                <FolderGit2 size={13} className="text-[#007acc]" />
+	                              </span>
+	                              <h3 className="font-bold text-xs text-white break-all font-mono leading-none tracking-tight">
+	                                {repo.name}
                               </h3>
                             </div>
 
@@ -886,7 +928,7 @@ export default function RepositoryExplorer() {
                             </div>
                           </div>
 
-                          <div className="flex flex-col gap-2">
+	                          <div className="flex flex-col gap-2">
                             <div className="flex flex-wrap gap-1">
                               {mappedProjs.length === 0 ? (
                                 <span className="text-[9px] font-mono text-gray-600 italic select-none">No Projects mapped</span>
@@ -911,7 +953,7 @@ export default function RepositoryExplorer() {
                                 ))
                               )}
                             </div>
-                            {getAvailableProjectsForRepo(repo.full_name).length > 0 ? (
+	                            {getAvailableProjectsForRepo(repo.full_name).length > 0 ? (
                               <select
                                 data-testid="repo-card-project-select"
                                 value=""
@@ -930,10 +972,27 @@ export default function RepositoryExplorer() {
                                   <option key={project.id} value={project.id}>{project.name}</option>
                                 ))}
                               </select>
-                            ) : projectTags.length === 0 ? (
-                              <span className="text-[9px] font-mono text-gray-600 italic select-none">Create a topic from the repo menu</span>
-                            ) : null}
-                          </div>
+	                            ) : projectTags.length === 0 ? (
+	                              <span className="text-[9px] font-mono text-gray-600 italic select-none" title="Right-click this repo to create a topic">No Projects mapped</span>
+	                            ) : null}
+	                            <div className="flex items-center gap-2">
+	                              <button
+	                                type="button"
+	                                onClick={() => openRepo(repo.full_name)}
+	                                className="px-2.5 py-1 rounded bg-[#094771] hover:bg-[#0e5f95] text-white text-[10px] font-mono font-semibold"
+	                              >
+	                                Open repository dashboard
+	                              </button>
+	                              <a
+	                                href={repo.html_url}
+	                                target="_blank"
+	                                rel="noopener noreferrer"
+	                                className="px-2.5 py-1 rounded border border-[#3e3e3e] text-gray-400 hover:text-white hover:border-gray-500 text-[10px] font-mono"
+	                              >
+	                                GitHub
+	                              </a>
+	                            </div>
+	                          </div>
                         </div>
                       </div>
                     );
@@ -946,11 +1005,13 @@ export default function RepositoryExplorer() {
       )}
 
       {/* Touch Screen/Desktop context helper overlays floating menus (Assigned on long press or right click) */}
-      {touchMenuRepo && touchMenuPos && (
-        <div
-          className="fixed bg-[#1f1f20] border border-gray-700 rounded shadow-2xl py-1 w-52 z-50 text-xs font-sans text-gray-200 select-none animate-in fade-in zoom-in-95 duration-100"
-          style={{ top: `${touchMenuPos.y}px`, left: `${touchMenuPos.x}px` }}
-        >
+	      {touchMenuRepo && touchMenuPos && (
+	        <div
+	          role="menu"
+	          className="fixed bg-[#1f1f20] border border-gray-700 rounded shadow-2xl py-1 w-52 z-50 text-xs font-sans text-gray-200 select-none animate-in fade-in zoom-in-95 duration-100"
+	          style={{ top: `${touchMenuPos.y}px`, left: `${touchMenuPos.x}px` }}
+	          onClick={(event) => event.stopPropagation()}
+	        >
           <div className="px-3 py-1.5 text-gray-500 font-mono font-semibold text-[10px] uppercase border-b border-gray-800">
             {touchMenuRepo.name} options
           </div>
@@ -963,9 +1024,10 @@ export default function RepositoryExplorer() {
             {projectTags.map((p) => {
               const isMapped = p.repos.includes(touchMenuRepo.full_name);
               return (
-                <button
-                  key={p.id}
-                  onClick={() => {
+	                <button
+	                  role="menuitem"
+	                  key={p.id}
+	                  onClick={() => {
                     if (isMapped) {
                       onRemoveRepoFromTag(p.id, touchMenuRepo.full_name);
                     } else {
@@ -980,19 +1042,11 @@ export default function RepositoryExplorer() {
                   <span className="break-words pr-1">{p.name}</span>
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
                 </button>
-              );
-            })}
-          </div>
-
-          <button
-            onClick={() => setTouchMenuRepo(null)}
-            className="w-full text-left px-3.5 py-2 hover:bg-gray-800 text-red-400 border-t border-gray-800 transition-colors flex items-center gap-2 cursor-pointer"
-          >
-            <X size={12} />
-            <span>Close Options Menu</span>
-          </button>
-        </div>
-      )}
+	              );
+	            })}
+	          </div>
+	        </div>
+	      )}
     </div>
   );
 }

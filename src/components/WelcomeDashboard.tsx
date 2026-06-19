@@ -9,7 +9,6 @@ import {
   CircleDot,
   Search,
   ChevronRight,
-  User,
   Tag,
   FolderOpen
 } from "lucide-react";
@@ -80,6 +79,8 @@ export default function WelcomeDashboard() {
     repos,
     projectTags,
     githubUser,
+    openRepositoryExplorer,
+    openProjectsDashboard,
     openProject,
     openTabs
   } = useWorkspace();
@@ -87,6 +88,7 @@ export default function WelcomeDashboard() {
   // Selected filters inside the unified inbox
   const [inboxQuery, setInboxQuery] = useState("");
   const [inboxFilter, setInboxFilter] = useState<"all" | "issues" | "prs">("all");
+  const [inboxLabelFilter, setInboxLabelFilter] = useState("all");
 
   // Flat list of combined issue and pull request activity items
   const [activityItems, setActivityItems] = useState<InboxActivityItem[]>([]);
@@ -210,6 +212,16 @@ export default function WelcomeDashboard() {
     return repos.reduce((sum, r) => sum + (r.stargazers_count || 0), 0);
   }, [repos]);
 
+  const inboxLabels = useMemo(() => {
+    const labelsByName = new Map<string, Label>();
+    activityItems.forEach((item) => {
+      item.labels.forEach((label) => {
+        labelsByName.set(label.name, label);
+      });
+    });
+    return [...labelsByName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [activityItems]);
+
   // Inbox filters
   const processedInboxItems = useMemo(() => {
     return activityItems.filter((item) => {
@@ -225,9 +237,12 @@ export default function WelcomeDashboard() {
         matchesSegment = item.type === "pr";
       }
 
-      return matchesSearch && matchesSegment;
+      const matchesLabel = inboxLabelFilter === "all" ||
+        item.labels.some((label) => label.name === inboxLabelFilter);
+
+      return matchesSearch && matchesSegment && matchesLabel;
     });
-  }, [activityItems, inboxQuery, inboxFilter]);
+  }, [activityItems, inboxQuery, inboxFilter, inboxLabelFilter]);
 
   return (
     <div className="flex-1 overflow-y-auto bg-[#1e1e19] text-[#cccccc] font-sans h-full scrollbar-thin select-text">
@@ -235,18 +250,9 @@ export default function WelcomeDashboard() {
       {/* 1. Profile Banner Room */}
       <div className="bg-gradient-to-r from-[#202022] to-[#1a1a1b] border-b border-[#2d2d2d] px-6 py-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-4 min-w-0">
-          {githubUser ? (
-            <img
-              src={githubUser.avatar_url || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=100&auto=format&fit=crop&q=60"}
-              alt={githubUser.login}
-              className="w-14 h-14 rounded-full border border-gray-700 shadow-lg shrink-0 object-cover"
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="w-14 h-14 bg-gray-800 rounded-full border border-gray-700 flex items-center justify-center shrink-0">
-              <User size={24} className="text-gray-500" />
-            </div>
-          )}
+          <div className="w-14 h-14 bg-gray-800 rounded border border-gray-700 flex items-center justify-center shrink-0">
+            <FolderGit2 size={24} className="text-[#007acc]" />
+          </div>
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-white flex items-center gap-2 break-words">
               <span>{githubUser?.name || githubUser?.login || "Guest Developer Workspace"}</span>
@@ -280,7 +286,7 @@ export default function WelcomeDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <button
             type="button"
-            onClick={() => openTabs("explorer", "welcome", "Repositories")}
+            onClick={openRepositoryExplorer}
             className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
           >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
@@ -295,7 +301,7 @@ export default function WelcomeDashboard() {
 
           <button
             type="button"
-            onClick={() => openTabs("explorer", "welcome", "Projects")}
+            onClick={openProjectsDashboard}
             className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
           >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
@@ -314,7 +320,7 @@ export default function WelcomeDashboard() {
             className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
           >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Open Issues</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Issues</span>
               <AlertCircle size={15} className="text-amber-500" />
             </div>
             <div className="text-xl font-bold text-white mt-1">
@@ -331,7 +337,7 @@ export default function WelcomeDashboard() {
             className="text-left bg-[#252526] p-4 rounded border border-[#3e3e3e] shadow-sm hover:border-[#007acc] transition-colors"
           >
             <div className="flex items-center justify-between text-gray-400 pb-1 select-none">
-              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">Open PRs</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider font-semibold">PRs</span>
               <GitPullRequest size={15} className="text-purple-400" />
             </div>
             <div className="text-xl font-bold text-white mt-1">
@@ -357,7 +363,7 @@ export default function WelcomeDashboard() {
                     <Activity size={15} className="text-[#007acc]" />
                     Inbox
                   </h2>
-                  <p className="text-[11px] text-gray-400 mt-0.5">Open issues and pull requests across tracked GitHub repositories</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">Issues and pull requests across tracked GitHub repositories</p>
                 </div>
 
                 {/* Search Inbox bar */}
@@ -404,9 +410,22 @@ export default function WelcomeDashboard() {
                   </button>
                 </div>
                 
-                <span className="text-[10px] font-mono text-gray-500 italic">
-                  Showing {processedInboxItems.length} items
-                </span>
+	                <div className="flex items-center gap-2">
+	                  <select
+	                    data-testid="inbox-label-filter"
+	                    value={inboxLabelFilter}
+	                    onChange={(event) => setInboxLabelFilter(event.target.value)}
+	                    className="bg-[#1e1e1f] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-[#007acc]"
+	                  >
+	                    <option value="all">All labels</option>
+	                    {inboxLabels.map((label) => (
+	                      <option key={label.name} value={label.name}>{label.name}</option>
+	                    ))}
+	                  </select>
+	                  <span className="text-[10px] font-mono text-gray-500 italic">
+	                    Showing {processedInboxItems.length} items
+	                  </span>
+	                </div>
               </div>
 
               {/* Stream Contents */}
@@ -456,26 +475,18 @@ export default function WelcomeDashboard() {
                             </div>
 
                             {/* Subtitle / Metadata details */}
-                            <div className="text-[11px] text-gray-500 mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                              <span className="flex items-center gap-1 select-none">
-                                <img
-                                  src={item.user?.avatar_url || "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=50"}
-                                  alt={item.user?.login}
-                                  className="w-3.5 h-3.5 rounded-full object-cover border border-gray-800"
-                                  referrerPolicy="no-referrer"
-                                />
-                                <span className="text-gray-400 font-medium">@{item.user?.login}</span>
-                              </span>
+	                            <div className="text-[11px] text-gray-500 mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+	                              <span className="flex items-center gap-1 select-none">
+	                                <span className="text-gray-400 font-medium">@{item.user?.login}</span>
+	                              </span>
                               <span>•</span>
                               <span>Created {formatDistanceToNow(item.created_at)}</span>
                               <span>•</span>
-                              <span>Updated {formatDistanceToNow(item.updated_at || item.created_at)}</span>
-                              <span>•</span>
-                              <span>{commentCount} comments</span>
-                              <span>•</span>
-                              <span className="capitalize">{item.state}</span>
-                              
-                              {item.labels && item.labels.length > 0 && (
+	                              <span>Updated {formatDistanceToNow(item.updated_at || item.created_at)}</span>
+	                              <span>•</span>
+	                              <span>{commentCount} comments</span>
+	                              
+	                              {item.labels && item.labels.length > 0 && (
                                 <>
                                   <span>•</span>
                                   <div className="flex gap-1 select-none">

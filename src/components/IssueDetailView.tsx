@@ -2,19 +2,17 @@ import React, { useState, useEffect } from "react";
 import {
   MessageSquare,
   Sparkles,
-  GitPullRequest,
-  CheckCircle2,
   Calendar,
   ExternalLink,
   ChevronRight,
   User as UserIcon,
   Send,
   Tag,
-  CircleDot,
   Loader2
 } from "lucide-react";
 import { Issue, Comment } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
+import { useWorkspace } from "../context/WorkspaceContext";
 
 interface IssueDetailViewProps {
   owner: string;
@@ -30,6 +28,8 @@ export default function IssueDetailView({
   onRefreshItem
 }: IssueDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
+  const { openRepo, openProject, projectTags } = useWorkspace();
+  const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Local comments state
   const [comments, setComments] = useState<Comment[]>([]);
@@ -89,7 +89,9 @@ export default function IssueDetailView({
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5 select-none">
-                <span>{fullName}</span>
+                <button type="button" onClick={() => openRepo(fullName)} className="hover:text-white hover:underline">
+                  {fullName}
+                </button>
                 <ChevronRight size={10} className="text-gray-500" />
                 <span>Issue #{issue.number}</span>
               </div>
@@ -111,22 +113,6 @@ export default function IssueDetailView({
           </div>
 
           <div className="flex flex-wrap items-center gap-3.5 mt-3 text-[11.5px] text-gray-400 select-none border-t border-[#3e3e3e]/50 pt-2.5">
-            {/* Status pill */}
-            <span
-              className={`px-3 py-1 text-xs font-bold font-sans rounded-full flex items-center gap-1.5 select-none ${
-                issue.state === "open"
-                  ? "bg-emerald-950/50 text-emerald-400 border border-emerald-900"
-                  : "bg-purple-950/50 text-purple-400 border border-purple-900"
-              }`}
-            >
-              {issue.state === "open" ? (
-                <CircleDot size={13} className="text-emerald-500 shrink-0" />
-              ) : (
-                <CheckCircle2 size={13} className="text-purple-400 shrink-0" />
-              )}
-              {issue.state === "open" ? "Open" : "Closed"}
-            </span>
-
             <span className="flex items-center gap-1">
               <UserIcon size={12} className="text-gray-500" />
               <strong className="text-gray-300 font-semibold">{issue.user.login}</strong>
@@ -145,6 +131,21 @@ export default function IssueDetailView({
               <MessageSquare size={12} className="text-gray-500" />
               {comments.length} Comments
             </span>
+            {repoProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => openProject(project.id)}
+                className="px-2 py-0.5 rounded border text-[10px] font-mono font-semibold hover:bg-black/10"
+                style={{
+                  backgroundColor: `${project.color}15`,
+                  borderColor: `${project.color}45`,
+                  color: project.color,
+                }}
+              >
+                {project.name}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -154,11 +155,6 @@ export default function IssueDetailView({
           <div className="border border-[#3e3e3e] rounded bg-[#232325] overflow-hidden shadow-sm">
             <div className="bg-[#2d2d30] px-4 py-2 border-b border-[#3e3e3e] flex items-center justify-between text-xs select-none">
               <div className="flex items-center gap-2">
-                <img
-                  src={issue.user.avatar_url}
-                  alt={issue.user.login}
-                  className="w-5 h-5 rounded-full ring-1 ring-gray-700"
-                />
                 <span className="font-semibold text-white">{issue.user.login}</span>
                 <span className="text-gray-500">original poster commented</span>
               </div>
@@ -225,11 +221,6 @@ export default function IssueDetailView({
                 >
                   <div className="bg-[#29292c] px-3.5 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none">
                     <div className="flex items-center gap-2">
-                      <img
-                        src={comment.user.avatar_url}
-                        alt={comment.user.login}
-                        className="w-4.5 h-4.5 rounded-full ring-1 ring-gray-700"
-                      />
                       <strong className="font-semibold text-white">{comment.user.login}</strong>
                       <span className="text-gray-500">commented</span>
                     </div>

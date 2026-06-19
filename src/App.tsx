@@ -19,6 +19,9 @@ type DockPanelParams = {
   repoName?: string;
   number?: number;
   data?: Issue | PullRequest;
+  explorerMode?: "repositories" | "projects" | "repo" | "project";
+  repoFullName?: string;
+  projectId?: string;
 };
 
 interface ProjectMutationNotification {
@@ -219,6 +222,7 @@ export default function App() {
 
   // GitHub items list states
   const [repos, setRepos] = useState<Repo[]>([]);
+  const reposRef = useRef<Repo[]>([]);
   const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
   const projectTagsRef = useRef<ProjectTag[]>([]);
   const [projectMutationNotifications, setProjectMutationNotifications] = useState<ProjectMutationNotification[]>([]);
@@ -263,6 +267,10 @@ export default function App() {
   useEffect(() => {
     bootstrapWorkspace();
   }, []);
+
+  useEffect(() => {
+    reposRef.current = repos;
+  }, [repos]);
 
   useEffect(() => {
     projectTagsRef.current = projectTags;
@@ -362,7 +370,8 @@ export default function App() {
     title: string,
     owner?: string,
     repo?: string,
-    number?: number
+    number?: number,
+    extraParams?: Partial<DockPanelParams>
   ) => {
     setActiveTabId(id);
 
@@ -384,7 +393,7 @@ export default function App() {
           id,
           title,
           component: targetComponent,
-          params: { id, type, title, owner, repoName: repo, number },
+          params: { id, type, title, owner, repoName: repo, number, ...extraParams },
           position: existingPanel
             ? { referencePanel: existingPanel.id, direction: "within" }
             : undefined,
@@ -394,9 +403,21 @@ export default function App() {
   };
 
   const handleOpenRepo = (repoFullName: string) => {
+    const repo = reposRef.current.find((item) => item.full_name === repoFullName);
+    if (!repo) {
+      throw new Error(`Repository ${repoFullName} was not found.`);
+    }
     setActiveRepoFullName(repoFullName);
     setActiveProjectDashboardId(null);
-    handleOpenTab("explorer", "welcome", "Repositories");
+    handleOpenTab(
+      `repo-dashboard-${repoFullName.replace(/\//g, "-")}`,
+      "welcome",
+      repo.name,
+      undefined,
+      undefined,
+      undefined,
+      { explorerMode: "repo", repoFullName }
+    );
   };
 
   const handleOpenProject = (projectId: string) => {
@@ -406,13 +427,43 @@ export default function App() {
     }
     setActiveProjectDashboardId(projectId);
     setActiveRepoFullName(null);
-    handleOpenTab("explorer", "welcome", "Repositories");
+    handleOpenTab(
+      `project-dashboard-${projectId}`,
+      "welcome",
+      project.name,
+      undefined,
+      undefined,
+      undefined,
+      { explorerMode: "project", projectId }
+    );
   };
 
   const handleOpenRepositoryExplorer = () => {
     setActiveRepoFullName(null);
     setActiveProjectDashboardId(null);
-    handleOpenTab("explorer", "welcome", "Repositories");
+    handleOpenTab(
+      "repositories-dashboard",
+      "welcome",
+      "Repositories",
+      undefined,
+      undefined,
+      undefined,
+      { explorerMode: "repositories" }
+    );
+  };
+
+  const handleOpenProjectsDashboard = () => {
+    setActiveRepoFullName(null);
+    setActiveProjectDashboardId(null);
+    handleOpenTab(
+      "projects-dashboard",
+      "welcome",
+      "Projects",
+      undefined,
+      undefined,
+      undefined,
+      { explorerMode: "projects" }
+    );
   };
 
   const updateProjectNotification = (id: string, patch: Partial<ProjectMutationNotification>) => {
@@ -559,8 +610,8 @@ export default function App() {
       welcome: () => (
         <WelcomeDashboard />
       ),
-      explorer: () => (
-        <RepositoryExplorer />
+      explorer: (props: IDockviewPanelProps<DockPanelParams>) => (
+        <RepositoryExplorer panelParams={props.params} />
       ),
       issue: (props: IDockviewPanelProps<{ owner?: string; repoName?: string; number?: number; data?: Issue }>) => (
         <DockviewIssueWrapper {...props} />
@@ -615,6 +666,7 @@ export default function App() {
     openRepo: handleOpenRepo,
     openProject: handleOpenProject,
     openRepositoryExplorer: handleOpenRepositoryExplorer,
+    openProjectsDashboard: handleOpenProjectsDashboard,
     onGlobalRefresh: handleGlobalSync,
     onAddProjectTag: handleAddProjectTag,
     onCreateProjectWithRepo: handleCreateProjectWithRepo,
@@ -693,6 +745,8 @@ export default function App() {
               onDeleteProjectTag={handleDeleteProjectTag}
               openRepo={handleOpenRepo}
               openProject={handleOpenProject}
+              openProjectsDashboard={handleOpenProjectsDashboard}
+              openRepositoryExplorer={handleOpenRepositoryExplorer}
               openTabs={handleOpenTab}
               activeTabId={activeTabId}
               onClose={() => setSidebarOpen(false)}

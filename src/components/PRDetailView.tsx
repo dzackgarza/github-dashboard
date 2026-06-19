@@ -25,6 +25,7 @@ import {
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { PullRequest, DiffFile, Comment, SecurityAlerts } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
+import { useWorkspace } from "../context/WorkspaceContext";
 
 interface PRDetailViewProps {
   owner: string;
@@ -40,6 +41,8 @@ export default function PRDetailView({
   onRefreshItem
 }: PRDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
+  const { openRepo, openProject, projectTags } = useWorkspace();
+  const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Tabs: "conversation", "diff"
   const [activeSubTab, setActiveSubTab] = useState<"conversation" | "diff">("conversation");
@@ -89,8 +92,8 @@ export default function PRDetailView({
       if (Array.isArray(data)) {
         setComments(data);
       }
-    } catch {
-      // Ignore
+    } catch (err) {
+      console.error("Failed loading PR comments", err);
     } finally {
       setLoadingComments(false);
     }
@@ -155,7 +158,9 @@ export default function PRDetailView({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5">
-              <span>{fullName}</span>
+              <button type="button" onClick={() => openRepo(fullName)} className="hover:text-white hover:underline">
+                {fullName}
+              </button>
               <ChevronRight size={10} className="text-gray-500" />
               <span>Pull Request #{pr.number}</span>
             </div>
@@ -176,13 +181,7 @@ export default function PRDetailView({
         </div>
 
         <div className="flex flex-wrap items-center gap-4 mt-3 text-[11.5px] text-gray-400">
-          <span className="px-3 py-1 text-xs font-bold font-sans rounded-full flex items-center gap-1.5 bg-purple-950/50 text-purple-400 border border-purple-900 leading-none">
-            <GitPullRequest size={13} className="text-purple-400 animate-pulse shrink-0" />
-            Open PR
-          </span>
-
           <span className="flex items-center gap-1">
-            <img src={pr.user.avatar_url} className="w-5 h-5 rounded-full ring-1 ring-gray-700" alt="" />
             <strong className="text-gray-300 font-semibold">@{pr.user.login}</strong>
           </span>
 
@@ -215,6 +214,21 @@ export default function PRDetailView({
             )}
             <span>CI Status: {ciStatus.state.toUpperCase()}</span>
           </div>
+          {repoProjects.map((project) => (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => openProject(project.id)}
+              className="px-2 py-0.5 rounded border text-[10px] font-mono font-semibold hover:bg-black/10"
+              style={{
+                backgroundColor: `${project.color}15`,
+                borderColor: `${project.color}45`,
+                color: project.color,
+              }}
+            >
+              {project.name}
+            </button>
+          ))}
         </div>
 
         {/* Workspace Tab navigation bar */}
@@ -259,7 +273,6 @@ export default function PRDetailView({
                 <div className="border border-gray-800/80 rounded bg-[#232325] overflow-hidden shadow-sm">
                   <div className="bg-[#2d2d30] px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none">
                     <div className="flex items-center gap-2">
-                      <img src={pr.user.avatar_url} className="w-5 h-5 rounded-full" alt="" />
                       <span className="font-semibold text-white">@{pr.user.login}</span>
                       <span className="text-gray-500">submitted merger request</span>
                     </div>
@@ -323,11 +336,6 @@ export default function PRDetailView({
                       >
                         <div className="bg-[#29292c] px-3.5 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none font-sans">
                           <div className="flex items-center gap-2">
-                            <img
-                              src={comment.user.avatar_url}
-                              alt=""
-                              className="w-4.5 h-4.5 rounded-full"
-                            />
                             <strong className="font-semibold text-white">@{comment.user.login}</strong>
                             <span className="text-gray-500">replied</span>
                           </div>

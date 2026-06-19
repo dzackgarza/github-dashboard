@@ -18,6 +18,7 @@ export interface WorkspaceContextType {
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
   openRepositoryExplorer: () => void;
+  openProjectsDashboard: () => void;
   onGlobalRefresh: () => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
   onCreateProjectWithRepo: (name: string, repoFullName: string) => void;
