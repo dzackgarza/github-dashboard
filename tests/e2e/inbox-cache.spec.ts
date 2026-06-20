@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import assert from "node:assert/strict";
 import { normalizeProjectTopicName } from "../../src/utils/projectTopics";
 
 interface CachedInboxItem {
@@ -37,6 +38,7 @@ interface Repo {
   updated_at: string;
   latest_commit_at: string | null;
   private: boolean;
+  archived: boolean;
 }
 
 interface BranchSummary {
@@ -103,6 +105,12 @@ interface OpenItemSelection {
 
 interface ReposResponse {
   repos: Repo[];
+  projectTags: ProjectTag[];
+}
+
+interface GitHubRepoTruth {
+  full_name: string;
+  archived: boolean;
 }
 
 interface PRDetailsResponse {
@@ -142,6 +150,16 @@ function expectedLatestCommitOrder(repos: Repo[]): string[] {
     .map((repo) => repo.full_name);
 }
 
+function githubApiHeaders(): Record<string, string> {
+  const token = process.env.GITHUB_TOKEN;
+  assert(typeof token === "string" && token.trim().length > 0, "GITHUB_TOKEN is required for live GitHub API truth.");
+  return {
+    Accept: "application/vnd.github.v3+json",
+    Authorization: `Bearer ${token}`,
+    "User-Agent": "GitHub-PR-Issue-Manager-Dashboard"
+  };
+}
+
 function isIssueListPath(pathname: string): boolean {
   return /^\/api\/github\/repos\/[^/]+\/[^/]+\/issues(?:\?.*)?$/.test(pathname);
 }
@@ -160,6 +178,30 @@ function isPullSinglePath(pathname: string): boolean {
 
 test("repos endpoint exposes latest branch-head commit activity and sorts newest first", async ({ request }) => {
   const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const githubReposResponse = await request.get("https://api.github.com/user/repos?per_page=100&sort=updated", {
+    headers: githubApiHeaders()
+  });
+  if (!githubReposResponse.ok()) {
+    throw new Error(`GitHub repository truth request failed with HTTP ${githubReposResponse.status()}.`);
+  }
+  const githubRepos = await githubReposResponse.json() as GitHubRepoTruth[];
+  const expectedActiveRepoNames = githubRepos
+    .filter((repo) => !repo.archived)
+    .map((repo) => repo.full_name)
+    .sort((left, right) => left.localeCompare(right));
+  const indexedRepoNames = reposPayload.repos
+    .map((repo) => repo.full_name)
+    .sort((left, right) => left.localeCompare(right));
+
+  expect(indexedRepoNames).toEqual(expectedActiveRepoNames);
+  expect(reposPayload.repos.filter((repo) => repo.archived).map((repo) => repo.full_name)).toEqual([]);
+
+  const indexedRepoNameSet = new Set(indexedRepoNames);
+  const projectReposOutsideIndex = [...new Set(reposPayload.projectTags.flatMap((tag) => tag.repos))]
+    .filter((fullName) => !indexedRepoNameSet.has(fullName))
+    .sort((left, right) => left.localeCompare(right));
+  expect(projectReposOutsideIndex).toEqual([]);
+
   if (reposPayload.repos.length < 2) {
     throw new Error("At least two live repositories are required to prove Explorer activity sorting.");
   }
@@ -308,35 +350,7 @@ test("sidebar context menus own tree actions and topic deletion", async ({ page,
   }
 });
 
-test("inbox exposes label filtering without redundant open-state or avatar chrome", async ({ page, request }) => {
-  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
-  let labelFixture: { label: string; title: string } | null = null;
-
-  for (const repo of reposPayload.repos) {
-    const [owner, name] = repo.full_name.split("/");
-    const issuesPayload = await (await request.get(`/api/github/repos/${owner}/${name}/issues`)).json() as ApiIssueLike[] | { error: string };
-    if (Array.isArray(issuesPayload)) {
-      const labeledIssue = issuesPayload.find((issue) => issue.labels.length > 0);
-      if (labeledIssue) {
-        labelFixture = { label: labeledIssue.labels[0].name, title: labeledIssue.title };
-        break;
-      }
-    }
-
-    const prsPayload = await (await request.get(`/api/github/repos/${owner}/${name}/prs`)).json() as ApiPullRequest[] | { error: string };
-    if (Array.isArray(prsPayload)) {
-      const labeledPr = prsPayload.find((pr) => pr.labels.length > 0);
-      if (labeledPr) {
-        labelFixture = { label: labeledPr.labels[0].name, title: labeledPr.title };
-        break;
-      }
-    }
-  }
-
-  if (!labelFixture) {
-    throw new Error("No live labeled issue or PR found to prove Inbox label filtering.");
-  }
-
+test("inbox exposes label filtering without redundant open-state or avatar chrome", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("github-user-avatar")).toHaveCount(0);
   await expect(page.getByText("Open Issues")).toHaveCount(0);
@@ -344,8 +358,15 @@ test("inbox exposes label filtering without redundant open-state or avatar chrom
 
   const labelFilter = page.getByTestId("inbox-label-filter");
   await expect(labelFilter).toBeVisible();
-  await labelFilter.selectOption(labelFixture.label);
-  await expect(page.getByText(labelFixture.title).first()).toBeVisible();
+  const renderedLabel = page.getByTestId("inbox-item-label").first();
+  await expect(renderedLabel).toBeVisible({ timeout: 60_000 });
+  const labelText = (await renderedLabel.textContent())?.trim();
+  assert(typeof labelText === "string" && labelText.length > 0, "Rendered inbox label text is required to prove label filtering.");
+
+  await labelFilter.selectOption(labelText);
+  const filteredItem = page.locator("[data-testid^='inbox-item-']").first();
+  await expect(filteredItem).toBeVisible();
+  await expect(filteredItem.getByTestId("inbox-item-label").filter({ hasText: labelText }).first()).toBeVisible();
   await expect(page.getByText(/^Showing \d+ items$/)).toBeVisible();
 });
 
@@ -381,6 +402,34 @@ test("project mutation toasts show a spinner while the background topic write is
       return tags.some((tag) => tag.id === projectTopic);
     }, { timeout: 45_000 }).toBe(true);
     await request.delete(`/api/github/projects/${projectTopic}`);
+  }
+});
+
+test("initial repo load shows a spinner toast until the repository index arrives", async ({ page }) => {
+  let releaseRepos: () => void = () => {};
+  let repoIndexRequests = 0;
+  const repoIndexGate = new Promise<void>((resolve) => {
+    releaseRepos = resolve;
+  });
+
+  await page.route("**/api/github/repos", async (route) => {
+    repoIndexRequests += 1;
+    await repoIndexGate;
+    await route.continue();
+  });
+
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect.poll(() => repoIndexRequests).toBeGreaterThan(0);
+
+    const loadingToast = page.getByTestId("initial-repo-loading-toast");
+    await expect(loadingToast).toBeVisible();
+    await expect(loadingToast.locator(".animate-spin")).toHaveCount(1);
+
+    releaseRepos();
+    await expect(loadingToast).toHaveCount(0);
+  } finally {
+    releaseRepos();
   }
 });
 

@@ -52,6 +52,7 @@ interface RepositoryFromApi {
   description: string;
   html_url: string;
   private: boolean;
+  archived: boolean;
   stargazers_count: number;
   language: string;
   owner: RepoOwner;
@@ -216,6 +217,8 @@ let globalRateLimit = {
 };
 
 const serverRepoCache: Record<string, GithubCacheEntry> = {};
+const USER_REPOS_CACHE_KEY = "user-repos";
+const WORKSPACE_REPOS_CACHE_KEY = "workspace-repos";
 const syncTimestamps: Record<string, string> = {};
 
 function addLog(repo: string, type: SyncLog["type"], message: string) {
@@ -386,6 +389,10 @@ function latestCommitTimestamp(branches: BranchHeadCommit[], fullName: string): 
   return new Date(Math.max(...timestamps)).toISOString();
 }
 
+function activeRepositoriesFromApi(repos: RepositoryFromApi[]): RepositoryFromApi[] {
+  return repos.filter((repo) => !repo.archived);
+}
+
 async function mapWithConcurrency<T, U>(items: T[], concurrency: number, transform: (item: T) => Promise<U>): Promise<U[]> {
   assert(Number.isInteger(concurrency) && concurrency > 0, "Concurrency must be a positive integer.");
   const results: Array<U | undefined> = new Array(items.length);
@@ -408,7 +415,7 @@ async function mapWithConcurrency<T, U>(items: T[], concurrency: number, transfo
 }
 
 async function normalizeRepositoriesForWorkspace(repos: RepositoryFromApi[]): Promise<RepositoryForWorkspace[]> {
-  const enriched = await mapWithConcurrency(repos, 4, async (repo) => {
+  const enriched = await mapWithConcurrency(activeRepositoriesFromApi(repos), 4, async (repo) => {
     const branchHeads = await fetchBranchHeadCommits(repo.full_name);
     return {
       ...repo,
@@ -444,21 +451,23 @@ function cacheCommit<T>(key: string, data: T, headers: Headers): void {
 }
 
 function updateCachedRepoTopics(fullName: string, topics: string[]): void {
-  const cached = serverRepoCache["user-repos"];
-  if (!cached) {
-    return;
-  }
+  [USER_REPOS_CACHE_KEY, WORKSPACE_REPOS_CACHE_KEY].forEach((cacheKey) => {
+    const cached = serverRepoCache[cacheKey];
+    if (!cached) {
+      return;
+    }
 
-  assert(Array.isArray(cached.data), "Cached repository data must be an array.");
-  const repos = cached.data as RepositoryFromApi[];
-  const index = repos.findIndex((repo) => repo.full_name === fullName);
-  if (index === -1) {
-    return;
-  }
+    assert(Array.isArray(cached.data), "Cached repository data must be an array.");
+    const repos = cached.data as RepositoryFromApi[];
+    const index = repos.findIndex((repo) => repo.full_name === fullName);
+    if (index === -1) {
+      return;
+    }
 
-  repos[index] = { ...repos[index], topics };
-  cached.data = repos;
-  cached.lastSynced = new Date().toISOString();
+    repos[index] = { ...repos[index], topics };
+    cached.data = repos;
+    cached.lastSynced = new Date().toISOString();
+  });
 }
 
 // Check GITHUB_TOKEN configuration
@@ -489,18 +498,34 @@ app.get("/api/github/config", async (_req, res) => {
 });
 
 app.get("/api/github/repos", async (_req, res) => {
-  const cacheKey = "user-repos";
-  const cached = serverRepoCache[cacheKey];
+  const rawRepoCache = serverRepoCache[USER_REPOS_CACHE_KEY];
+  const workspaceRepoCache = serverRepoCache[WORKSPACE_REPOS_CACHE_KEY];
 
   try {
-    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", cacheKey);
+    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", USER_REPOS_CACHE_KEY);
 
-    if (status === 304 && cached) {
-      assert(Array.isArray(cached.data), "Cached repository data must be an array.");
-      const cachedRepos = cached.data as RepositoryForWorkspace[];
+    if (status === 304) {
+      if (workspaceRepoCache) {
+        assert(Array.isArray(workspaceRepoCache.data), "Cached workspace repository data must be an array.");
+        const cachedRepos = workspaceRepoCache.data as RepositoryForWorkspace[];
+        return res.json({
+          repos: cachedRepos,
+          projectTags: deriveProjectTagsFromRepos(cachedRepos),
+          syncTimestamps,
+          rateLimit: globalRateLimit
+        });
+      }
+
+      assert(rawRepoCache && Array.isArray(rawRepoCache.data), "Cached GitHub repository data must be available after a 304 response.");
+      const workspaceRepos = await normalizeRepositoriesForWorkspace(rawRepoCache.data as RepositoryFromApi[]);
+      serverRepoCache[WORKSPACE_REPOS_CACHE_KEY] = {
+        etag: rawRepoCache.etag,
+        data: workspaceRepos,
+        lastSynced: new Date().toISOString()
+      };
       return res.json({
-        repos: cachedRepos,
-        projectTags: deriveProjectTagsFromRepos(cachedRepos),
+        repos: workspaceRepos,
+        projectTags: deriveProjectTagsFromRepos(workspaceRepos),
         syncTimestamps,
         rateLimit: globalRateLimit
       });
@@ -508,8 +533,10 @@ app.get("/api/github/repos", async (_req, res) => {
 
     if (status === 200 && data) {
       assertArray<RepositoryFromApi>(data, "GitHub repository list must be an array.");
-      const workspaceRepos = await normalizeRepositoriesForWorkspace(data);
-      cacheCommit(cacheKey, workspaceRepos, headers);
+      const activeRepos = activeRepositoriesFromApi(data);
+      cacheCommit(USER_REPOS_CACHE_KEY, activeRepos, headers);
+      const workspaceRepos = await normalizeRepositoriesForWorkspace(activeRepos);
+      cacheCommit(WORKSPACE_REPOS_CACHE_KEY, workspaceRepos, headers);
 
       workspaceRepos.forEach((repo) => {
         syncTimestamps[repo.full_name] = new Date().toISOString();
@@ -898,11 +925,10 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
 });
 
 app.get("/api/github/projects", async (_req, res) => {
-  const cacheKey = "user-repos";
-  const cached = serverRepoCache[cacheKey];
+  const cached = serverRepoCache[USER_REPOS_CACHE_KEY];
 
   try {
-    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", cacheKey);
+    const { data, status, headers } = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", USER_REPOS_CACHE_KEY);
 
     if (status === 304 && cached) {
       assert(Array.isArray(cached.data), "Cached repository data must be an array.");
@@ -911,8 +937,9 @@ app.get("/api/github/projects", async (_req, res) => {
 
     if (status === 200 && data) {
       assertArray<RepositoryFromApi>(data, "GitHub repository list must be an array.");
-      cacheCommit(cacheKey, data, headers);
-      return res.json(deriveProjectTagsFromRepos(data));
+      const activeRepos = activeRepositoriesFromApi(data);
+      cacheCommit(USER_REPOS_CACHE_KEY, activeRepos, headers);
+      return res.json(deriveProjectTagsFromRepos(activeRepos));
     }
 
     return res.status(status).json({ error: `GitHub repository topics request failed with status ${status}.` });
@@ -954,12 +981,19 @@ app.delete("/api/github/projects/:topic", async (req, res) => {
   assertValidProjectTopicName(topic);
 
   try {
-    const reposResponse = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", "user-repos");
-    const repos = reposResponse.status === 304
-      ? serverRepoCache["user-repos"]?.data as RepositoryFromApi[] | undefined
-      : reposResponse.data;
-
-    assert(Array.isArray(repos), "GitHub repository list must be available before deleting a project topic.");
+    const reposResponse = await githubFetch<RepositoryFromApi[]>("/user/repos?per_page=100&sort=updated", USER_REPOS_CACHE_KEY);
+    let repos: RepositoryFromApi[];
+    if (reposResponse.status === 304) {
+      const cachedRepos = serverRepoCache[USER_REPOS_CACHE_KEY]?.data;
+      assert(Array.isArray(cachedRepos), "GitHub repository cache must be available before deleting a project topic.");
+      repos = cachedRepos as RepositoryFromApi[];
+    } else if (reposResponse.status === 200 && reposResponse.data) {
+      assertArray<RepositoryFromApi>(reposResponse.data, "GitHub repository list must be available before deleting a project topic.");
+      repos = activeRepositoriesFromApi(reposResponse.data);
+      cacheCommit(USER_REPOS_CACHE_KEY, repos, reposResponse.headers);
+    } else {
+      return res.status(reposResponse.status).json({ error: `GitHub repository topics request failed with status ${reposResponse.status}.` });
+    }
 
     const reposWithTopic = repos.filter((repo) => repo.topics.includes(topic));
     for (const repo of reposWithTopic) {

@@ -493,6 +493,7 @@ export default function WelcomeDashboard() {
                                     {item.labels.slice(0, 2).map((lbl: Label) => (
                                       <span
                                         key={lbl.name}
+                                        data-testid="inbox-item-label"
                                         className="text-[9px] px-1 py-0.2 rounded font-mono"
                                         style={{ backgroundColor: `${lbl.color}22`, color: `#${lbl.color}` || "gray" }}
                                       >

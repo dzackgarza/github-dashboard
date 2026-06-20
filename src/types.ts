@@ -24,6 +24,7 @@ export interface Repo {
   description: string;
   html_url: string;
   private: boolean;
+  archived: boolean;
   stargazers_count: number;
   language: string;
   owner: User;

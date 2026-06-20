@@ -226,6 +226,7 @@ export default function App() {
   const [projectTags, setProjectTags] = useState<ProjectTag[]>([]);
   const projectTagsRef = useRef<ProjectTag[]>([]);
   const [projectMutationNotifications, setProjectMutationNotifications] = useState<ProjectMutationNotification[]>([]);
+  const [isInitialRepoLoadRunning, setIsInitialRepoLoadRunning] = useState(false);
   const [syncTimestamps, setSyncTimestamps] = useState<Record<string, string>>({});
   const [isSyncing, setIsSyncing] = useState<Record<string, boolean>>({});
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>("all");
@@ -285,7 +286,9 @@ export default function App() {
       setGithubUser(config.user);
 
       // 2) Load core repos list
+      setIsInitialRepoLoadRunning(true);
       await fetchRepos();
+      setIsInitialRepoLoadRunning(false);
 
       // 3) Pull developer sync logs & limits
       await refreshSyncDiagnostics();
@@ -691,8 +694,22 @@ export default function App() {
   return (
     <WorkspaceContext.Provider value={contextValue}>
       <div className="w-screen h-screen flex flex-col bg-[#1e1e1e] overflow-hidden text-[#cccccc] font-sans">
-      {projectMutationNotifications.length > 0 && (
+      {(isInitialRepoLoadRunning || projectMutationNotifications.length > 0) && (
         <div className="fixed right-4 bottom-4 z-[200] w-[360px] max-w-[calc(100vw-2rem)] space-y-2">
+          {isInitialRepoLoadRunning && (
+            <div
+              data-testid="initial-repo-loading-toast"
+              className="border rounded bg-[#252526] shadow-xl px-3 py-2 text-xs border-[#3e3e3e] text-gray-200"
+            >
+              <div className="flex items-start gap-2">
+                <RefreshCw size={13} className="mt-0.5 shrink-0 animate-spin text-[#007acc]" />
+                <div className="min-w-0">
+                  <div className="font-semibold leading-snug break-words">Loading repositories</div>
+                  <div className="mt-1 text-[11px] text-gray-400 break-words">Reading live GitHub repository index</div>
+                </div>
+              </div>
+            </div>
+          )}
           {projectMutationNotifications.map((notification) => (
             <div
               key={notification.id}
