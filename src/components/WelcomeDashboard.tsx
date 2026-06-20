@@ -15,6 +15,7 @@ import {
 import { useWorkspace } from "../context/WorkspaceContext";
 import { Issue, PullRequest, Repo, Label } from "../types";
 import { invariant } from "../utils/invariant";
+import { LabelFilterSelect } from "./WorkspacePrimitives";
 
 type InboxActivityItem = (Issue | PullRequest) & {
   repoName: string;
@@ -411,17 +412,12 @@ export default function WelcomeDashboard() {
                 </div>
                 
 	                <div className="flex items-center gap-2">
-	                  <select
-	                    data-testid="inbox-label-filter"
+	                  <LabelFilterSelect
+	                    labels={inboxLabels}
 	                    value={inboxLabelFilter}
-	                    onChange={(event) => setInboxLabelFilter(event.target.value)}
-	                    className="bg-[#1e1e1f] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-gray-300 outline-none focus:border-[#007acc]"
-	                  >
-	                    <option value="all">All labels</option>
-	                    {inboxLabels.map((label) => (
-	                      <option key={label.name} value={label.name}>{label.name}</option>
-	                    ))}
-	                  </select>
+	                    onChange={setInboxLabelFilter}
+	                    testId="inbox-label-filter"
+	                  />
 	                  <span className="text-[10px] font-mono text-gray-500 italic">
 	                    Showing {processedInboxItems.length} items
 	                  </span>

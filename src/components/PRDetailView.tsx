@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import {
   GitPullRequest,
   ExternalLink,
-  ChevronRight,
   MessageSquare,
   FileCode,
   ShieldAlert,
@@ -26,6 +25,7 @@ import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "reac
 import { PullRequest, DiffFile, Comment, SecurityAlerts } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { WorkspaceBreadcrumbs } from "./WorkspacePrimitives";
 
 interface PRDetailViewProps {
   owner: string;
@@ -41,7 +41,7 @@ export default function PRDetailView({
   onRefreshItem
 }: PRDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
-  const { openRepo, openProject, projectTags } = useWorkspace();
+  const { openRepo, openProject, openRepositoryExplorer, projectTags } = useWorkspace();
   const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Tabs: "conversation", "diff"
@@ -157,12 +157,14 @@ export default function PRDetailView({
       <div className="p-4 border-b border-[#3e3e3e] shrink-0 bg-[#252526] select-none">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5">
-              <button type="button" onClick={() => openRepo(fullName)} className="hover:text-white hover:underline">
-                {fullName}
-              </button>
-              <ChevronRight size={10} className="text-gray-500" />
-              <span>Pull Request #{pr.number}</span>
+            <div className="pb-1.5">
+              <WorkspaceBreadcrumbs
+                items={[
+                  { label: "Repositories", onClick: openRepositoryExplorer },
+                  { label: fullName, onClick: () => openRepo(fullName) },
+                  { label: `Pull Request #${pr.number}` }
+                ]}
+              />
             </div>
             <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
               {pr.title}

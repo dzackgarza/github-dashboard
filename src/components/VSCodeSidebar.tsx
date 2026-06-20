@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
+import { ProjectAssignmentDialog } from "./WorkspacePrimitives";
 
 type SidebarContextMenu =
   | { type: "repo"; x: number; y: number; repoFullName: string }
@@ -76,7 +77,6 @@ export default function VSCodeSidebar({
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
-  const [contextProjectName, setContextProjectName] = useState("");
 
   // Track expanded repositories
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
@@ -92,6 +92,9 @@ export default function VSCodeSidebar({
 
   // Right-click Context Menu state
   const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
+  const [assignmentTarget, setAssignmentTarget] = useState<
+    { type: "repo"; repo: Repo } | { type: "project"; project: ProjectTag } | null
+  >(null);
 
   // Handle right click menu cleanup
   useEffect(() => {
@@ -226,19 +229,6 @@ export default function VSCodeSidebar({
     return matchesSearch && matchesProject;
   });
 
-  const createContextProject = () => {
-    if (!contextMenu || contextMenu.type !== "repo") {
-      return;
-    }
-    const name = contextProjectName.trim();
-    if (!name) {
-      return;
-    }
-    onCreateProjectWithRepo(name, contextMenu.repoFullName);
-    setContextProjectName("");
-    setContextMenu(null);
-  };
-
   const expandAllRepos = () => {
     setReposExpanded(true);
     setExpandedRepos(Object.fromEntries(filteredRepos.map((repo) => [repo.full_name, true])));
@@ -257,6 +247,11 @@ export default function VSCodeSidebar({
   const collapseAllProjects = () => {
     setExpandedProjects(Object.fromEntries(projectTags.map((tag) => [tag.id, false])));
   };
+
+  const contextMenuStyle = (x: number, y: number) => ({
+    top: `${Math.max(8, Math.min(y, window.innerHeight - 220))}px`,
+    left: `${Math.max(8, Math.min(x, window.innerWidth - 240))}px`
+  });
 
   return (
     <div className="w-full h-full bg-[#252526] flex flex-col select-none text-[#cccccc] relative font-sans">
@@ -706,7 +701,7 @@ export default function VSCodeSidebar({
             <div
               role="menu"
               className={menuClass}
-              style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
               onClick={(event) => event.stopPropagation()}
             >
               <button role="menuitem" type="button" onClick={() => { openRepositoryExplorer(); setContextMenu(null); }} className={menuButtonClass}>
@@ -727,7 +722,7 @@ export default function VSCodeSidebar({
             <div
               role="menu"
               className={menuClass}
-              style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
               onClick={(event) => event.stopPropagation()}
             >
               <button role="menuitem" type="button" onClick={() => { openProjectsDashboard(); setContextMenu(null); }} className={menuButtonClass}>
@@ -752,7 +747,7 @@ export default function VSCodeSidebar({
             <div
               role="menu"
               className={menuClass}
-              style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
               onClick={(event) => event.stopPropagation()}
             >
               <button role="menuitem" type="button" onClick={() => { openProject(project.id); setContextMenu(null); }} className={menuButtonClass}>
@@ -767,13 +762,19 @@ export default function VSCodeSidebar({
               <button
                 role="menuitem"
                 type="button"
-                onClick={() => {
-                  onDeleteProjectTag(project.id);
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setAssignmentTarget({ type: "project", project });
                   setContextMenu(null);
                 }}
-                className="w-full px-3 py-1.5 text-left text-red-300 hover:bg-[#5a1d24] hover:text-white transition-colors cursor-pointer border-t border-gray-800"
+                onClick={() => {
+                  setAssignmentTarget({ type: "project", project });
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer border-t border-gray-800"
               >
-                Remove topic from all repos
+                Manage Project
               </button>
             </div>
           );
@@ -788,7 +789,7 @@ export default function VSCodeSidebar({
           <div
             role="menu"
             className={menuClass}
-            style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+            style={contextMenuStyle(contextMenu.x, contextMenu.y)}
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -813,60 +814,31 @@ export default function VSCodeSidebar({
             >
               Open in GitHub
             </a>
-            <div className="px-3 py-1.5 border-y border-gray-800 text-[10px] font-mono text-gray-500 uppercase leading-none font-semibold">
-              Add to Project
-            </div>
-            <div className="p-2 space-y-1.5 border-b border-gray-800">
-              <input
-                data-testid="context-create-project-input"
-                value={contextProjectName}
-                onChange={(event) => setContextProjectName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    createContextProject();
-                  }
-                }}
-                placeholder="New project name"
-                className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
-              />
-              <button
-                data-testid="context-create-project-button"
-                type="button"
-                onClick={createContextProject}
-                className="w-full px-2 py-1 text-left text-[11px] font-mono bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
-              >
-                Create and Add
-              </button>
-            </div>
-            {projectTags.length === 0 ? (
-              <div className="px-3 py-2 text-gray-500 italic">No existing projects.</div>
-            ) : (
-              projectTags.map((tag) => {
-                const isAdded = tag.repos.includes(contextMenu.repoFullName);
-                return (
-                  <button
-                    role="menuitem"
-                    key={tag.id}
-                    type="button"
-                    onClick={() => {
-                      onAddProjectTag(tag.name, contextMenu.repoFullName);
-                      setContextMenu(null);
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors flex items-center justify-between cursor-pointer"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
-                      <span className="break-words">{tag.name}</span>
-                    </div>
-                    {isAdded && <span className="text-[10px] text-emerald-400 font-bold shrink-0">Added</span>}
-                  </button>
-                );
-              })
-            )}
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setAssignmentTarget({ type: "repo", repo: menuRepo });
+                setContextMenu(null);
+              }}
+              className={menuButtonClass}
+            >
+              Manage Projects
+            </button>
           </div>
         );
       })()}
+      <ProjectAssignmentDialog
+        target={assignmentTarget}
+        repos={repos}
+        projectTags={projectTags}
+        onClose={() => setAssignmentTarget(null)}
+        onOpenProject={openProject}
+        onAddProjectTag={onAddProjectTag}
+        onCreateProjectWithRepo={onCreateProjectWithRepo}
+        onRemoveRepoFromTag={onRemoveRepoFromTag}
+        onDeleteProjectTag={onDeleteProjectTag}
+      />
     </div>
   );
 }

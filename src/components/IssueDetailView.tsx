@@ -4,7 +4,6 @@ import {
   Sparkles,
   Calendar,
   ExternalLink,
-  ChevronRight,
   User as UserIcon,
   Send,
   Tag,
@@ -13,6 +12,7 @@ import {
 import { Issue, Comment } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { WorkspaceBreadcrumbs } from "./WorkspacePrimitives";
 
 interface IssueDetailViewProps {
   owner: string;
@@ -28,7 +28,7 @@ export default function IssueDetailView({
   onRefreshItem
 }: IssueDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
-  const { openRepo, openProject, projectTags } = useWorkspace();
+  const { openRepo, openProject, openRepositoryExplorer, projectTags } = useWorkspace();
   const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Local comments state
@@ -88,12 +88,14 @@ export default function IssueDetailView({
         <div className="p-4 border-b border-[#3e3e3e] shrink-0 bg-[#252526]">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5 select-none">
-                <button type="button" onClick={() => openRepo(fullName)} className="hover:text-white hover:underline">
-                  {fullName}
-                </button>
-                <ChevronRight size={10} className="text-gray-500" />
-                <span>Issue #{issue.number}</span>
+              <div className="pb-1.5 select-none">
+                <WorkspaceBreadcrumbs
+                  items={[
+                    { label: "Repositories", onClick: openRepositoryExplorer },
+                    { label: fullName, onClick: () => openRepo(fullName) },
+                    { label: `Issue #${issue.number}` }
+                  ]}
+                />
               </div>
               <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
                 {issue.title}
