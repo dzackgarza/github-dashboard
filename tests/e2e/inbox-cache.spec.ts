@@ -509,28 +509,40 @@ test("shared label filters constrain inbox repo and project issue and PR lists",
 
     const inboxLabelFilter = page.getByTestId("inbox-label-filter");
     await inboxLabelFilter.selectOption(labeledIssue.label);
-    await assertVisibleRowsCarryLabel(page.locator("[data-testid^='inbox-item-']"), "inbox-item-label", labeledIssue.label);
+    await assertVisibleRowsCarryLabel(
+      page.locator("[data-testid^='inbox-item-issue-'], [data-testid^='inbox-item-pr-']"),
+      "inbox-item-label",
+      labeledIssue.label
+    );
 
     await page.getByRole("button", { name: /^Repos \d+/ }).click();
     const explorerSurface = page.locator(".dockview-theme-abyss");
 
     await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(labeledIssue.fullName)}`).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Open Repo Dashboard" }).click();
-    await explorerSurface.getByTestId("repo-issues-label-filter").selectOption(labeledIssue.label);
+    const repoIssuesLabelFilter = explorerSurface.getByTestId("repo-issues-label-filter");
+    await expect(repoIssuesLabelFilter).toBeVisible({ timeout: 5_000 });
+    await repoIssuesLabelFilter.selectOption(labeledIssue.label);
     await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("repo-issue-row"), "issue-row-label", labeledIssue.label);
 
     await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(labeledPR.fullName)}`).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Open Repo Dashboard" }).click();
-    await explorerSurface.getByTestId("repo-prs-label-filter").selectOption(labeledPR.label);
+    const repoPrsLabelFilter = explorerSurface.getByTestId("repo-prs-label-filter");
+    await expect(repoPrsLabelFilter).toBeVisible({ timeout: 5_000 });
+    await repoPrsLabelFilter.selectOption(labeledPR.label);
     await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("repo-pr-row"), "pr-row-label", labeledPR.label);
 
     await expect(page.getByRole("button", { name: projectTopic }).first()).toBeVisible({ timeout: 45_000 });
     await page.getByRole("button", { name: projectTopic }).first().click();
 
-    await explorerSurface.getByTestId("project-issues-label-filter").selectOption(labeledIssue.label);
+    const projectIssuesLabelFilter = explorerSurface.getByTestId("project-issues-label-filter");
+    await expect(projectIssuesLabelFilter).toBeVisible({ timeout: 5_000 });
+    await projectIssuesLabelFilter.selectOption(labeledIssue.label);
     await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("project-issue-row"), "issue-row-label", labeledIssue.label);
 
-    await explorerSurface.getByTestId("project-prs-label-filter").selectOption(labeledPR.label);
+    const projectPrsLabelFilter = explorerSurface.getByTestId("project-prs-label-filter");
+    await expect(projectPrsLabelFilter).toBeVisible({ timeout: 5_000 });
+    await projectPrsLabelFilter.selectOption(labeledPR.label);
     await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("project-pr-row"), "pr-row-label", labeledPR.label);
   } finally {
     await request.delete(`/api/github/projects/${projectTopic}`);
@@ -1302,7 +1314,9 @@ test("repo right-click menu can create a project containing that repo", async ({
     const projectRepoUrl = `https://github.com/${projectRepo}`;
     await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(projectRepo)}`).click({ button: "right" });
     await expect(page.getByTestId("context-open-github")).toHaveAttribute("href", projectRepoUrl);
-    await page.getByRole("menuitem", { name: "Manage Projects" }).click();
+    const manageProjects = page.getByRole("menuitem", { name: "Manage Projects" });
+    await expect(manageProjects).toBeVisible({ timeout: 5_000 });
+    await manageProjects.click();
     const dialog = page.getByTestId("project-assignment-dialog");
     await dialog.getByTestId("project-assignment-create-input").fill(projectName);
     await dialog.getByTestId("project-assignment-create-button").click();
