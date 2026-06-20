@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import assert from "node:assert/strict";
 import { normalizeProjectTopicName } from "../../src/utils/projectTopics";
 
@@ -39,6 +39,7 @@ interface Repo {
   latest_commit_at: string | null;
   private: boolean;
   archived: boolean;
+  topics: string[];
 }
 
 interface BranchSummary {
@@ -103,9 +104,39 @@ interface OpenItemSelection {
   body: string;
 }
 
+interface TemporaryPullRequestSelection extends OpenItemSelection {
+  branchName: string;
+}
+
+type LabeledItemCleanup =
+  | { kind: "none" }
+  | { kind: "temporary-label" }
+  | { kind: "temporary-pr-and-label"; branchName: string };
+
+interface LabeledItemSelection extends OpenItemSelection {
+  label: string;
+  cleanup: LabeledItemCleanup;
+}
+
 interface ReposResponse {
   repos: Repo[];
   projectTags: ProjectTag[];
+}
+
+interface GitHubRepoDetails {
+  default_branch: string;
+}
+
+interface GitHubRefResponse {
+  object: {
+    sha: string;
+  };
+}
+
+interface GitHubPullRequestResponse {
+  number: number;
+  title: string;
+  body: string | null;
 }
 
 interface GitHubRepoTruth {
@@ -292,6 +323,94 @@ test("repository and project navigation uses canonical dashboard actions and sta
   await expect(explorerSurface.getByText(/^Branches \(/)).toBeVisible();
 });
 
+test("repo and project cards use the canonical assignment dialog without body navigation", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const targetRepo = reposPayload.repos[0];
+  if (!targetRepo) {
+    throw new Error("At least one live repository is required to prove canonical card behavior.");
+  }
+  const projectName = `e2e-card-dialog-${Date.now()}`;
+  const projectTopic = normalizeProjectTopicName(projectName);
+
+  try {
+    await addTopicToRepo(request, targetRepo, projectTopic);
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    const explorerSurface = page.locator(".dockview-theme-abyss");
+
+    await expect(explorerSurface.getByTestId("repo-card-project-select")).toHaveCount(0);
+    await expect(explorerSurface.getByTestId("repo-dashboard-project-select")).toHaveCount(0);
+
+    const repoCard = explorerSurface.getByTestId("repo-card").filter({ hasText: targetRepo.name }).first();
+    await expect(repoCard).toBeVisible();
+    await expect(repoCard.getByRole("button", { name: "Manage projects" })).toBeVisible({ timeout: 5_000 });
+    await repoCard.getByRole("button", { name: "Manage projects" }).click();
+    await expect(page.getByTestId("project-assignment-dialog")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel assignment" }).click();
+
+    await repoCard.getByRole("button", { name: /^Open repository dashboard/ }).click();
+    await expect(explorerSurface.getByRole("button", { name: "Manage projects" })).toBeVisible({ timeout: 5_000 });
+    await explorerSurface.getByRole("button", { name: "Manage projects" }).click();
+    await expect(page.getByTestId("project-assignment-dialog")).toBeVisible();
+    await page.getByRole("button", { name: "Cancel assignment" }).click();
+
+    await page.getByRole("button", { name: projectTopic }).first().click();
+    const projectRepoCard = explorerSurface.getByTestId("repo-card").filter({ hasText: targetRepo.full_name }).first();
+    await expect(projectRepoCard).toBeVisible();
+    await projectRepoCard.click();
+    await expect(explorerSurface.getByTestId("project-dashboard")).toBeVisible();
+    await expect(explorerSurface.getByText("Project Repositories")).toBeVisible();
+  } finally {
+    await request.delete(`/api/github/projects/${projectTopic}`);
+  }
+});
+
+test("workspace breadcrumbs open parent dashboards through workspace tabs", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const selectedIssue = await discoverOpenIssue(request);
+  if (!selectedIssue) {
+    throw new Error("No open issue fixture found for workspace breadcrumb proof.");
+  }
+  const targetRepo = reposPayload.repos.find((repo) => repo.full_name === selectedIssue.fullName);
+  if (!targetRepo) {
+    throw new Error(`Issue repository ${selectedIssue.fullName} was not present in the repository index.`);
+  }
+  const projectName = `e2e-breadcrumb-${Date.now()}`;
+  const projectTopic = normalizeProjectTopicName(projectName);
+
+  try {
+    await addTopicToRepo(request, targetRepo, projectTopic);
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    const explorerSurface = page.locator(".dockview-theme-abyss");
+
+    await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(selectedIssue.fullName)}`).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Open Repo Dashboard" }).click();
+    const repoBreadcrumbs = explorerSurface.getByTestId("workspace-breadcrumbs");
+    await expect(repoBreadcrumbs.getByRole("button", { name: "Repositories" })).toBeVisible();
+    await repoBreadcrumbs.getByRole("button", { name: "Repositories" }).click();
+    await expect(explorerSurface.getByPlaceholder("Search repositories")).toBeVisible();
+
+    await page.getByRole("button", { name: projectTopic }).first().click();
+    const projectBreadcrumbs = explorerSurface.getByTestId("workspace-breadcrumbs");
+    await expect(projectBreadcrumbs.getByRole("button", { name: "Projects" })).toBeVisible();
+    await projectBreadcrumbs.getByRole("button", { name: "Projects" }).click();
+    await expect(explorerSurface.getByTestId("projects-dashboard")).toBeVisible();
+
+    await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(selectedIssue.fullName)}`).click({ position: { x: 8, y: 8 } });
+    await page.getByTestId(`sidebar-subfolder-${normalizedRepoTestId(selectedIssue.fullName)}-issues`).click();
+    await page.getByTestId(`sidebar-issue-${normalizedRepoTestId(selectedIssue.fullName)}-${selectedIssue.number}`).click();
+    const issueBreadcrumbs = page.getByTestId("workspace-breadcrumbs");
+    await expect(issueBreadcrumbs.getByRole("button", { name: "Repositories" })).toBeVisible();
+    await expect(issueBreadcrumbs.getByRole("button", { name: selectedIssue.fullName })).toBeVisible();
+    await issueBreadcrumbs.getByRole("button", { name: selectedIssue.fullName }).click();
+    await expect(explorerSurface.getByText("Last updated:")).toBeVisible();
+  } finally {
+    await request.delete(`/api/github/projects/${projectTopic}`);
+  }
+});
+
 test("sidebar context menus own tree actions and topic deletion", async ({ page, request }) => {
   const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
   const projectName = `e2e-sidebar-menu-${Date.now()}`;
@@ -314,10 +433,7 @@ test("sidebar context menus own tree actions and topic deletion", async ({ page,
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menuitem", { name: "Open Repositories Dashboard" })).toHaveCount(0);
 
-    const normalizedProjectRepo = projectRepo.replace(/\//g, "-");
-    await page.getByTestId(`sidebar-repo-${normalizedProjectRepo}`).click({ button: "right" });
-    await page.getByTestId("context-create-project-input").fill(projectName);
-    await page.getByTestId("context-create-project-button").click();
+    await createProjectFromAssignmentDialog(page, projectRepo, projectName);
     await expect.poll(async () => {
       const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
       return tags.some((tag) => tag.id === projectTopic);
@@ -335,9 +451,13 @@ test("sidebar context menus own tree actions and topic deletion", async ({ page,
     await expect(projectRow).toBeVisible({ timeout: 30_000 });
     await projectRow.scrollIntoViewIfNeeded();
     await projectRow.click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "Remove topic from all repos" })).toBeVisible();
+    const manageProject = page.getByRole("menuitem", { name: "Manage Project" });
+    await expect(manageProject).toBeVisible({ timeout: 5_000 });
+    await manageProject.click();
+    const projectDialog = page.getByTestId("project-assignment-dialog");
+    await expect(projectDialog.getByRole("button", { name: "Remove topic from all repos" })).toBeVisible();
     await expect(page.locator("text=Create topics from a repository menu")).toHaveCount(0);
-    await page.getByRole("menuitem", { name: "Remove topic from all repos" }).click();
+    await projectDialog.getByRole("button", { name: "Remove topic from all repos" }).click();
     await expect.poll(async () => {
       const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
       return tags.some((tag) => tag.id === projectTopic);
@@ -370,6 +490,55 @@ test("inbox exposes label filtering without redundant open-state or avatar chrom
   await expect(page.getByText(/^Showing \d+ items$/)).toBeVisible();
 });
 
+test("shared label filters constrain inbox repo and project issue and PR lists", async ({ page, request }) => {
+  const labeledIssue = await discoverLabeledIssue(request);
+  const labeledPR = await discoverLabeledPullRequest(request);
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const projectName = `e2e-label-filter-${Date.now()}`;
+  const projectTopic = normalizeProjectTopicName(projectName);
+  const projectRepoNames = [...new Set([labeledIssue.fullName, labeledPR.fullName])];
+
+  try {
+    for (const repoFullName of projectRepoNames) {
+      const repo = reposPayload.repos.find((item) => item.full_name === repoFullName);
+      assert(repo, `Repository ${repoFullName} must exist in indexed repos for label filter setup.`);
+      await addTopicToRepo(request, repo, projectTopic);
+    }
+
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+
+    const inboxLabelFilter = page.getByTestId("inbox-label-filter");
+    await inboxLabelFilter.selectOption(labeledIssue.label);
+    await assertVisibleRowsCarryLabel(page.locator("[data-testid^='inbox-item-']"), "inbox-item-label", labeledIssue.label);
+
+    await page.getByRole("button", { name: /^Repos \d+/ }).click();
+    const explorerSurface = page.locator(".dockview-theme-abyss");
+
+    await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(labeledIssue.fullName)}`).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Open Repo Dashboard" }).click();
+    await explorerSurface.getByTestId("repo-issues-label-filter").selectOption(labeledIssue.label);
+    await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("repo-issue-row"), "issue-row-label", labeledIssue.label);
+
+    await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(labeledPR.fullName)}`).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Open Repo Dashboard" }).click();
+    await explorerSurface.getByTestId("repo-prs-label-filter").selectOption(labeledPR.label);
+    await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("repo-pr-row"), "pr-row-label", labeledPR.label);
+
+    await expect(page.getByRole("button", { name: projectTopic }).first()).toBeVisible({ timeout: 45_000 });
+    await page.getByRole("button", { name: projectTopic }).first().click();
+
+    await explorerSurface.getByTestId("project-issues-label-filter").selectOption(labeledIssue.label);
+    await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("project-issue-row"), "issue-row-label", labeledIssue.label);
+
+    await explorerSurface.getByTestId("project-prs-label-filter").selectOption(labeledPR.label);
+    await assertVisibleRowsCarryLabel(explorerSurface.getByTestId("project-pr-row"), "pr-row-label", labeledPR.label);
+  } finally {
+    await request.delete(`/api/github/projects/${projectTopic}`);
+    await removeTemporaryLabel(request, labeledIssue);
+    await removeTemporaryLabel(request, labeledPR);
+  }
+});
+
 test("project mutation toasts show a spinner while the background topic write is running", async ({ page, request }) => {
   const reposResponse = await (await request.get("/api/github/repos")).json() as ReposResponse;
   const projectName = `e2e-toast-${Date.now()}`;
@@ -388,9 +557,9 @@ test("project mutation toasts show a spinner while the background topic write is
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /^Repos \d+/ }).click();
-    await page.getByTestId(`sidebar-repo-${projectRepo.replace(/\//g, "-")}`).click({ button: "right" });
-    await page.getByTestId("context-create-project-input").fill(projectName);
-    await page.getByTestId("context-create-project-button").click();
+    const dialog = await openSidebarAssignmentDialog(page, projectRepo);
+    await dialog.getByTestId("project-assignment-create-input").fill(projectName);
+    await dialog.getByTestId("project-assignment-create-button").click();
 
     const savingToast = page.getByText("Saving").locator("xpath=ancestor::div[contains(@class, 'border')][1]");
     await expect(savingToast).toBeVisible();
@@ -503,6 +672,288 @@ function isApiIssueLike(value: unknown): value is ApiIssueLike {
     typeof (label as Record<string, unknown>).name === "string" &&
     typeof (label as Record<string, unknown>).color === "string"
   );
+}
+
+function normalizedRepoTestId(fullName: string): string {
+  return fullName.replace(/\//g, "-");
+}
+
+async function discoverLabeledIssue(request: APIRequestContext): Promise<LabeledItemSelection> {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  let unlabeledIssue: OpenItemSelection | null = null;
+  for (const repo of reposPayload.repos) {
+    const [owner, name] = repo.full_name.split("/");
+    const issuesPayload = await (await request.get(`/api/github/repos/${owner}/${name}/issues`)).json() as
+      ApiIssueLike[] | { error: string };
+    if (Array.isArray(issuesPayload)) {
+      const issue = issuesPayload.find((candidate) => candidate.labels.length > 0 && isApiIssueLike(candidate));
+      if (issue) {
+        return {
+          owner,
+          name,
+          fullName: repo.full_name,
+          number: issue.number,
+          title: issue.title,
+          body: issue.body || "",
+          label: issue.labels[0].name,
+          cleanup: { kind: "none" }
+        };
+      }
+      const unlabeled = issuesPayload.find((candidate) => candidate.labels.length === 0 && isApiIssueLike(candidate));
+      if (!unlabeledIssue && unlabeled) {
+        unlabeledIssue = {
+          owner,
+          name,
+          fullName: repo.full_name,
+          number: unlabeled.number,
+          title: unlabeled.title,
+          body: unlabeled.body || ""
+        };
+      }
+    }
+  }
+  if (unlabeledIssue) {
+    const label = await createAndApplyTemporaryLabel(request, unlabeledIssue);
+    return { ...unlabeledIssue, label, cleanup: { kind: "temporary-label" } };
+  }
+  throw new Error("No live issue fixture was available for label-filter proof.");
+}
+
+async function discoverLabeledPullRequest(request: APIRequestContext): Promise<LabeledItemSelection> {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  let unlabeledPullRequest: OpenItemSelection | null = null;
+  for (const repo of reposPayload.repos) {
+    const [owner, name] = repo.full_name.split("/");
+    const prsPayload = await (await request.get(`/api/github/repos/${owner}/${name}/prs`)).json() as
+      ApiPullRequest[] | { error: string };
+    if (Array.isArray(prsPayload)) {
+      const pr = prsPayload.find((candidate) => candidate.labels.length > 0 && isApiIssueLike(candidate));
+      if (pr) {
+        return {
+          owner,
+          name,
+          fullName: repo.full_name,
+          number: pr.number,
+          title: pr.title,
+          body: pr.body || "",
+          label: pr.labels[0].name,
+          cleanup: { kind: "none" }
+        };
+      }
+      const unlabeled = prsPayload.find((candidate) => candidate.labels.length === 0 && isApiIssueLike(candidate));
+      if (!unlabeledPullRequest && unlabeled) {
+        unlabeledPullRequest = {
+          owner,
+          name,
+          fullName: repo.full_name,
+          number: unlabeled.number,
+          title: unlabeled.title,
+          body: unlabeled.body || ""
+        };
+      }
+    }
+  }
+  if (unlabeledPullRequest) {
+    const label = await createAndApplyTemporaryLabel(request, unlabeledPullRequest);
+    return { ...unlabeledPullRequest, label, cleanup: { kind: "temporary-label" } };
+  }
+
+  const repoForTemporaryPullRequest = reposPayload.repos[0];
+  if (!repoForTemporaryPullRequest) {
+    throw new Error("At least one live repository is required to create a temporary PR label-filter fixture.");
+  }
+  const temporaryPullRequest = await createTemporaryPullRequest(request, repoForTemporaryPullRequest);
+  const label = await createAndApplyTemporaryLabel(request, temporaryPullRequest);
+  return {
+    ...temporaryPullRequest,
+    label,
+    cleanup: { kind: "temporary-pr-and-label", branchName: temporaryPullRequest.branchName }
+  };
+}
+
+async function createAndApplyTemporaryLabel(request: APIRequestContext, item: OpenItemSelection): Promise<string> {
+  const label = normalizeProjectTopicName(`e2e-label-${Date.now()}`);
+  const labelResponse = await request.post(`https://api.github.com/repos/${item.owner}/${item.name}/labels`, {
+    headers: githubApiHeaders(),
+    data: {
+      name: label,
+      color: "ededed",
+      description: "Temporary e2e label-filter proof"
+    }
+  });
+  if (!labelResponse.ok()) {
+    throw new Error(`Unable to create temporary label ${label} on ${item.fullName}: HTTP ${labelResponse.status()}`);
+  }
+
+  const issueLabelResponse = await request.post(
+    `https://api.github.com/repos/${item.owner}/${item.name}/issues/${item.number}/labels`,
+    {
+      headers: githubApiHeaders(),
+      data: { labels: [label] }
+    }
+  );
+  if (!issueLabelResponse.ok()) {
+    throw new Error(`Unable to apply temporary label ${label} to ${item.fullName}#${item.number}: HTTP ${issueLabelResponse.status()}`);
+  }
+
+  return label;
+}
+
+async function createTemporaryPullRequest(request: APIRequestContext, repo: Repo): Promise<TemporaryPullRequestSelection> {
+  const [owner, name] = repo.full_name.split("/");
+  const headers = githubApiHeaders();
+  const repoResponse = await request.get(`https://api.github.com/repos/${owner}/${name}`, { headers });
+  if (!repoResponse.ok()) {
+    throw new Error(`Unable to read repository ${repo.full_name} for temporary PR setup: HTTP ${repoResponse.status()}`);
+  }
+  const repoDetails = await repoResponse.json() as GitHubRepoDetails;
+  assert(typeof repoDetails.default_branch === "string" && repoDetails.default_branch.length > 0, `${repo.full_name} must expose a default branch.`);
+
+  const branchName = normalizeProjectTopicName(`e2e-label-pr-${Date.now()}`);
+  const encodedBaseBranch = repoDetails.default_branch.split("/").map(encodeURIComponent).join("/");
+  const baseRefResponse = await request.get(`https://api.github.com/repos/${owner}/${name}/git/ref/heads/${encodedBaseBranch}`, { headers });
+  if (!baseRefResponse.ok()) {
+    throw new Error(`Unable to read base branch ${repoDetails.default_branch} for ${repo.full_name}: HTTP ${baseRefResponse.status()}`);
+  }
+  const baseRef = await baseRefResponse.json() as GitHubRefResponse;
+  assert(typeof baseRef.object?.sha === "string" && baseRef.object.sha.length > 0, `${repo.full_name} base ref must expose an object SHA.`);
+
+  const createRefResponse = await request.post(`https://api.github.com/repos/${owner}/${name}/git/refs`, {
+    headers,
+    data: {
+      ref: `refs/heads/${branchName}`,
+      sha: baseRef.object.sha
+    }
+  });
+  if (!createRefResponse.ok()) {
+    throw new Error(`Unable to create temporary branch ${branchName} on ${repo.full_name}: HTTP ${createRefResponse.status()}`);
+  }
+
+  const filePath = `.github-dashboard-e2e-${branchName}.md`;
+  const contentResponse = await request.put(`https://api.github.com/repos/${owner}/${name}/contents/${filePath}`, {
+    headers,
+    data: {
+      message: `Create ${branchName}`,
+      content: Buffer.from(`Temporary PR fixture for dashboard label filtering: ${branchName}\n`).toString("base64"),
+      branch: branchName
+    }
+  });
+  if (!contentResponse.ok()) {
+    throw new Error(`Unable to create temporary PR file on ${branchName} in ${repo.full_name}: HTTP ${contentResponse.status()}`);
+  }
+
+  const title = `Dashboard label filter fixture ${branchName}`;
+  const pullResponse = await request.post(`https://api.github.com/repos/${owner}/${name}/pulls`, {
+    headers,
+    data: {
+      title,
+      head: branchName,
+      base: repoDetails.default_branch,
+      body: "Temporary PR fixture for dashboard label filtering."
+    }
+  });
+  if (!pullResponse.ok()) {
+    throw new Error(`Unable to create temporary PR from ${branchName} in ${repo.full_name}: HTTP ${pullResponse.status()}`);
+  }
+  const pullRequest = await pullResponse.json() as GitHubPullRequestResponse;
+  assert(Number.isInteger(pullRequest.number), `${repo.full_name} temporary PR response must expose a number.`);
+
+  return {
+    owner,
+    name,
+    fullName: repo.full_name,
+    number: pullRequest.number,
+    title: pullRequest.title,
+    body: pullRequest.body || "",
+    branchName
+  };
+}
+
+async function removeTemporaryLabel(request: APIRequestContext, item: LabeledItemSelection): Promise<void> {
+  if (item.cleanup.kind === "none") {
+    return;
+  }
+
+  const headers = githubApiHeaders();
+  const encodedLabel = encodeURIComponent(item.label);
+  const issueLabelResponse = await request.delete(
+    `https://api.github.com/repos/${item.owner}/${item.name}/issues/${item.number}/labels/${encodedLabel}`,
+    { headers }
+  );
+  if (!issueLabelResponse.ok()) {
+    throw new Error(`Unable to remove temporary label ${item.label} from ${item.fullName}#${item.number}: HTTP ${issueLabelResponse.status()}`);
+  }
+
+  const repoLabelResponse = await request.delete(
+    `https://api.github.com/repos/${item.owner}/${item.name}/labels/${encodedLabel}`,
+    { headers }
+  );
+  if (!repoLabelResponse.ok()) {
+    throw new Error(`Unable to delete temporary label ${item.label} from ${item.fullName}: HTTP ${repoLabelResponse.status()}`);
+  }
+
+  if (item.cleanup.kind === "temporary-pr-and-label") {
+    const closePrResponse = await request.patch(`https://api.github.com/repos/${item.owner}/${item.name}/pulls/${item.number}`, {
+      headers,
+      data: { state: "closed" }
+    });
+    if (!closePrResponse.ok()) {
+      throw new Error(`Unable to close temporary PR ${item.fullName}#${item.number}: HTTP ${closePrResponse.status()}`);
+    }
+
+    const encodedBranchName = item.cleanup.branchName.split("/").map(encodeURIComponent).join("/");
+    const deleteBranchResponse = await request.delete(`https://api.github.com/repos/${item.owner}/${item.name}/git/refs/heads/${encodedBranchName}`, {
+      headers
+    });
+    if (!deleteBranchResponse.ok()) {
+      throw new Error(`Unable to delete temporary branch ${item.cleanup.branchName} from ${item.fullName}: HTTP ${deleteBranchResponse.status()}`);
+    }
+  }
+}
+
+async function addTopicToRepo(request: APIRequestContext, repo: Repo, topic: string): Promise<void> {
+  const [owner, name] = repo.full_name.split("/");
+  const topics = [...new Set([...repo.topics, topic])].sort((left, right) => left.localeCompare(right));
+  const response = await request.put(`/api/github/repos/${owner}/${name}/topics`, {
+    data: { topics }
+  });
+  if (!response.ok()) {
+    throw new Error(`Unable to add topic ${topic} to ${repo.full_name}: HTTP ${response.status()}`);
+  }
+}
+
+async function openSidebarAssignmentDialog(page: Page, repoFullName: string): Promise<Locator> {
+  await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(repoFullName)}`).click({ button: "right" });
+  const manageProjects = page.getByRole("menuitem", { name: "Manage Projects" });
+  await expect(manageProjects).toBeVisible({ timeout: 5_000 });
+  await manageProjects.click();
+  const dialog = page.getByTestId("project-assignment-dialog");
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function createProjectFromAssignmentDialog(page: Page, repoFullName: string, projectName: string): Promise<void> {
+  const dialog = await openSidebarAssignmentDialog(page, repoFullName);
+  await dialog.getByTestId("project-assignment-create-input").fill(projectName);
+  await dialog.getByTestId("project-assignment-create-button").click();
+}
+
+async function assertVisibleRowsCarryLabel(
+  rows: Locator,
+  labelTestId: string,
+  labelName: string
+): Promise<void> {
+  await expect(rows.first()).toBeVisible();
+  const rowCount = await rows.count();
+  let visibleRows = 0;
+  for (let index = 0; index < rowCount; index++) {
+    const row = rows.nth(index);
+    if (await row.isVisible()) {
+      visibleRows += 1;
+      await expect(row.getByTestId(labelTestId).filter({ hasText: labelName }).first()).toBeVisible();
+    }
+  }
+  assert(visibleRows > 0, `At least one visible row is required for label ${labelName}.`);
 }
 
 test("reopened Inbox renders cached items while live refresh is active", async ({ page }) => {
@@ -801,9 +1252,7 @@ test("rapid repo project assignments settle to server-canonical project state", 
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /^Repos \d+/ }).click();
     for (const repoFullName of targetRepos) {
-      await page.getByTestId(`sidebar-repo-${repoFullName.replace(/\//g, "-")}`).click({ button: "right" });
-      await page.getByTestId("context-create-project-input").fill(projectName);
-      await page.getByTestId("context-create-project-button").click();
+      await createProjectFromAssignmentDialog(page, repoFullName, projectName);
     }
 
     await expect.poll(async () => {
@@ -824,14 +1273,11 @@ test("opening a project dashboard does not apply the explorer project filter", a
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /^Repos \d+/ }).click();
-    const normalizedProjectRepo = projectRepo.replace(/\//g, "-");
-    await page.getByTestId(`sidebar-repo-${normalizedProjectRepo}`).click({ button: "right" });
-    await page.getByTestId("context-create-project-input").fill(projectName);
-    await page.getByTestId("context-create-project-button").click();
+    await createProjectFromAssignmentDialog(page, projectRepo, projectName);
     await page.getByRole("button", { name: projectTopic }).first().click();
 
     await expect(page.getByRole("heading", { name: projectTopic })).toBeVisible();
-    await expect(page.getByTestId("project-dashboard-repo").filter({ hasText: projectRepo })).toBeVisible();
+    await expect(page.getByTestId("repo-card").filter({ hasText: projectRepo })).toBeVisible();
     await expect(page.getByText("Explorer filter:")).toBeVisible();
     await expect(page.getByText("Unchanged")).toBeVisible();
     await expect(page.getByText("Project:")).toHaveCount(0);
@@ -854,11 +1300,12 @@ test("repo right-click menu can create a project containing that repo", async ({
       throw new Error("Visible sidebar repository row did not expose a full repository name.");
     }
     const projectRepoUrl = `https://github.com/${projectRepo}`;
-    const normalizedProjectRepo = projectRepo.replace(/\//g, "-");
-    await page.getByTestId(`sidebar-repo-${normalizedProjectRepo}`).click({ button: "right" });
+    await page.getByTestId(`sidebar-repo-${normalizedRepoTestId(projectRepo)}`).click({ button: "right" });
     await expect(page.getByTestId("context-open-github")).toHaveAttribute("href", projectRepoUrl);
-    await page.getByTestId("context-create-project-input").fill(projectName);
-    await page.getByTestId("context-create-project-button").click();
+    await page.getByRole("menuitem", { name: "Manage Projects" }).click();
+    const dialog = page.getByTestId("project-assignment-dialog");
+    await dialog.getByTestId("project-assignment-create-input").fill(projectName);
+    await dialog.getByTestId("project-assignment-create-button").click();
 
     await expect.poll(async () => {
       const tags = await (await request.get("/api/github/projects")).json() as ProjectTag[];
