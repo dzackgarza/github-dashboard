@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   Search,
   FolderGit2,
@@ -93,6 +93,8 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
   >(null);
   const [contextRepo, setContextRepo] = useState<Repo | null>(null);
   const [contextPos, setContextPos] = useState<{ x: number; y: number } | null>(null);
+  const contextPopupRef = useRef<HTMLDivElement | null>(null);
+  const [contextPopupPos, setContextPopupPos] = useState<{ left: number; top: number } | null>(null);
 
   useEffect(() => {
     const closeMenu = () => {
@@ -109,6 +111,22 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, []);
+
+  // Clamp the right-click card popup into the viewport after it renders at the cursor.
+  useLayoutEffect(() => {
+    if (!contextRepo || !contextPos) {
+      setContextPopupPos(null);
+      return;
+    }
+    const node = contextPopupRef.current;
+    if (!node) {
+      return;
+    }
+    const margin = 8;
+    const left = Math.max(margin, Math.min(contextPos.x, window.innerWidth - node.offsetWidth - margin));
+    const top = Math.max(margin, Math.min(contextPos.y, window.innerHeight - node.offsetHeight - margin));
+    setContextPopupPos({ left, top });
+  }, [contextRepo, contextPos]);
 
   useEffect(() => {
     if (!selectedRepo) {
@@ -585,31 +603,32 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
 
       {contextRepo && contextPos && (
         <div
-          role="menu"
-          className="fixed bg-[#1f1f20] border border-gray-700 rounded shadow-2xl py-1 w-56 z-50 text-xs font-sans text-gray-200 select-none"
-          style={{ top: `${contextPos.y}px`, left: `${contextPos.x}px` }}
+          ref={contextPopupRef}
+          data-testid="repo-context-popup"
+          className="fixed z-50 w-72 max-w-[calc(100vw-1rem)]"
+          style={{ left: `${contextPopupPos?.left ?? contextPos.x}px`, top: `${contextPopupPos?.top ?? contextPos.y}px` }}
           onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
         >
-          <div className="px-3 py-1.5 text-gray-500 font-mono font-semibold text-[10px] uppercase border-b border-gray-800">
-            {contextRepo.name} options
-          </div>
-          <button role="menuitem" type="button" onClick={() => openRepo(contextRepo.full_name)} className="w-full text-left px-3.5 py-1.5 hover:bg-[#007acc] hover:text-white">
-            Open Repo Dashboard
-          </button>
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => {
-              setAssignmentTarget({ type: "repo", repo: contextRepo });
+          <RepoCard
+            repo={contextRepo}
+            projects={getMappedProjectsForRepo(contextRepo.full_name)}
+            onOpenRepo={(fullName) => {
+              openRepo(fullName);
               setContextRepo(null);
+              setContextPos(null);
             }}
-            className="w-full text-left px-3.5 py-1.5 hover:bg-[#007acc] hover:text-white"
-          >
-            Manage Projects
-          </button>
-          <a data-testid="context-open-github" role="menuitem" href={contextRepo.html_url} target="_blank" rel="noopener noreferrer" className="block px-3.5 py-1.5 hover:bg-[#007acc] hover:text-white">
-            GitHub
-          </a>
+            onOpenProject={(projectId) => {
+              openProject(projectId);
+              setContextRepo(null);
+              setContextPos(null);
+            }}
+            onManageProjects={(nextRepo) => {
+              setAssignmentTarget({ type: "repo", repo: nextRepo });
+              setContextRepo(null);
+              setContextPos(null);
+            }}
+          />
         </div>
       )}
 

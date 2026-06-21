@@ -1336,3 +1336,47 @@ test("repo right-click menu can create a project containing that repo", async ({
     await request.delete(`/api/github/projects/${projectTopic}`);
   }
 });
+
+test("explorer right-click popup renders the canonical repo card clamped to the viewport", async ({ page, request }) => {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const targetRepo = reposPayload.repos[0];
+  if (!targetRepo) {
+    throw new Error("At least one live repository is required to prove the explorer card popup.");
+  }
+
+  // Constrain the viewport height so a popup anchored at the cursor near the card's
+  // bottom would overflow the bottom edge unless it is clamped into the viewport.
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+  const explorerSurface = page.locator(".dockview-theme-abyss");
+
+  const gridCard = explorerSurface.getByTestId("repo-card").filter({ hasText: targetRepo.full_name }).first();
+  await expect(gridCard).toBeVisible();
+  const gridBox = await gridCard.boundingBox();
+  assert(gridBox, "Grid repo card bounding box is required to anchor the right-click.");
+  await gridCard.click({ button: "right", position: { x: gridBox.width - 6, y: gridBox.height - 6 } });
+
+  // The popup is a positioned container rendering the SAME canonical repo card, not a
+  // bespoke menu. It must expose the card's metadata and actions.
+  const popup = page.getByTestId("repo-context-popup");
+  await expect(popup).toBeVisible();
+  const popupCard = popup.getByTestId("repo-card");
+  await expect(popupCard).toBeVisible();
+  await expect(popupCard.getByText(targetRepo.full_name)).toBeVisible();
+  await expect(popupCard.getByRole("button", { name: /^Open repository dashboard/ })).toBeVisible();
+  await expect(popupCard.getByRole("link", { name: "GitHub" })).toHaveAttribute("href", targetRepo.html_url);
+
+  // The popup must stay fully inside the viewport rather than overflow at the cursor.
+  const popupBox = await popup.boundingBox();
+  const viewport = page.viewportSize();
+  assert(popupBox && viewport, "Popup bounding box and viewport size are required.");
+  expect(popupBox.x).toBeGreaterThanOrEqual(0);
+  expect(popupBox.y).toBeGreaterThanOrEqual(0);
+  expect(popupBox.x + popupBox.width).toBeLessThanOrEqual(viewport.width + 1);
+  expect(popupBox.y + popupBox.height).toBeLessThanOrEqual(viewport.height + 1);
+
+  // The popup card's Manage projects action launches the canonical assignment dialog.
+  await popupCard.getByRole("button", { name: "Manage projects" }).click();
+  await expect(page.getByTestId("project-assignment-dialog")).toBeVisible();
+});
