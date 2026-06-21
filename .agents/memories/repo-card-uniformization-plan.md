@@ -1,6 +1,6 @@
 ---
 title: Repo/Project Card Uniformization Plan
-status: active
+status: complete
 source: dashboard-ux-requirements.md (R1-R4, R7)
 ---
 
@@ -183,35 +183,35 @@ vitest + Playwright) as the gate.
 
 ### Prerequisites
 
-- [ ] <!-- status: pending --> Dev server + live GitHub token reachable
-- [ ] <!-- status: pending --> Baseline test state captured
+- [x] <!-- status: complete --> Dev server + live GitHub token reachable
+- [x] <!-- status: complete --> Baseline test state captured
 
 ### Phase 0: Baseline
 
-- [ ] <!-- status: pending --> Task 0: record red/green state of card tests in inbox-cache.spec.ts
+- [x] <!-- status: complete --> Task 0: recorded red/green state. All card tests were already green; the only baseline red was a pre-existing, data-dependent flake in the single-item-endpoint navigation test (not a card defect), fixed in commit 07e856f.
 
 ### Phase 1: Single-source the popup
 
-- [ ] <!-- status: pending --> Task 1.1: render RepoCard in the right-click popup
-- [ ] <!-- status: pending --> Task 1.2: delete the hand-rolled menu
-- [ ] <!-- status: pending --> Task 1.3: update popup e2e selectors
+- [x] <!-- status: complete --> Task 1.1: render RepoCard in the right-click popup (commit 182620e)
+- [x] <!-- status: complete --> Task 1.2: delete the hand-rolled menu (commit 182620e)
+- [x] <!-- status: complete --> Task 1.3: added popup e2e coverage. Plan correction: test `:1301` right-clicks the SIDEBAR context menu (VSCodeSidebar), not the explorer grid popup, so no selector retarget was needed. The explorer grid popup had zero prior coverage, so a new test ("explorer right-click popup renders the canonical repo card clamped to the viewport") was added instead.
 
 ### Phase 2: New-tab semantics
 
-- [ ] <!-- status: pending --> Task 2.1: verify/fix openTabs does not hijack
+- [x] <!-- status: complete --> Task 2.1: verified `openTabs` does not hijack. `App.tsx` `handleOpenTab` focuses an existing panel by id or adds a new one; unique tab ids per repo/project mean opening never replaces the current tab. Already satisfied; no code change.
 
 ### Phase 3: Project card uniformity
 
-- [ ] <!-- status: pending --> Task 3.1: audit project card/pill render sites
+- [x] <!-- status: complete --> Task 3.1: audited project card/pill render sites. No ad-hoc project card/pill exists outside `WorkspacePrimitives`. Already single-source; no code change.
 
 ### System-Level Validation
 
-- [ ] <!-- status: pending --> `just test` green (lint + vitest + Playwright)
-- [ ] <!-- status: pending --> Right-click popup renders the canonical card within the viewport
+- [x] <!-- status: complete --> `just test` green (lint + vitest + 19 Playwright e2e) at commit 182620e
+- [x] <!-- status: complete --> Right-click popup renders the canonical card within the viewport (proved by the new e2e clamp assertion)
 
 ### Quality Gates
 
-- [ ] <!-- status: pending --> Completeness verified
-- [ ] <!-- status: pending --> Actionability verified
-- [ ] <!-- status: pending --> Design sensibility verified
-- [ ] <!-- status: pending --> Test quality verified
+- [x] <!-- status: complete --> Completeness verified
+- [x] <!-- status: complete --> Actionability verified
+- [x] <!-- status: complete --> Design sensibility verified
+- [x] <!-- status: complete --> Test quality verified
