@@ -29,7 +29,6 @@ just test
 The application requires these environment variables:
 
 * `PORT`: server listen port.
-* `STATIC_DIST_DIR`: built SPA directory for production mode.
 * `GITHUB_TOKEN`: A GitHub personal access token with permissions to read repositories, issues, and pull requests.
 
 ## Data Boundaries

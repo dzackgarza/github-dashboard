@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import path from "path";
 import express from "express";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
@@ -20,15 +19,7 @@ function requirePort(name: string): number {
   return parsed;
 }
 
-function requirePath(name: string): string {
-  const raw = requireEnvVar(name);
-  const resolved = path.resolve(process.cwd(), raw);
-  assert(resolved.length > 0, `${name} must be a valid path.`);
-  return resolved;
-}
-
 const PORT = requirePort("PORT");
-const STATIC_DIST_DIR = requirePath("STATIC_DIST_DIR");
 const GITHUB_TOKEN = requireEnvVar("GITHUB_TOKEN");
 
 const app = express();
@@ -1023,18 +1014,11 @@ app.get("/api/github/sync-logs", (_req, res) => {
 });
 
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(STATIC_DIST_DIR));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(STATIC_DIST_DIR, "index.html"));
-    });
-  }
+  const vite = await createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa"
+  });
+  app.use(vite.middlewares);
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`[GitHub PR Dashboard Server] booted clean on http://0.0.0.0:${PORT}`);
