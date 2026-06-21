@@ -1215,8 +1215,15 @@ test("issue and PR detail views load summary from single-item endpoints", async 
 
   const prRepo = selectedPR.fullName.replace(/\//g, "-");
   const prRepoRow = page.getByTestId(`sidebar-repo-${prRepo}`);
-  await prRepoRow.click({ position: { x: 8, y: 8 } });
-  await page.getByTestId(`sidebar-subfolder-${prRepo}-prs`).click();
+  const prSubfolder = page.getByTestId(`sidebar-subfolder-${prRepo}-prs`);
+  // The repo tree row toggles expansion on click. When the open PR and the open issue
+  // live in the same repository, that repo is already expanded from the issue phase, so
+  // only click to expand when the PRs subfolder is not already present.
+  if (!(await prSubfolder.isVisible())) {
+    await prRepoRow.click({ position: { x: 8, y: 8 } });
+  }
+  await expect(prSubfolder).toBeVisible();
+  await prSubfolder.click();
 
   calls.issueList = 0;
   calls.issueSingle = 0;
