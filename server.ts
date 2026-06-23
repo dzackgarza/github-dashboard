@@ -18,8 +18,7 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 assert(GITHUB_TOKEN, "GITHUB_TOKEN is required in the process environment.");
 
 const app = express();
-const PORT = Number.parseInt(process.env.PORT || "3002", 10);
-assert(Number.isInteger(PORT) && PORT > 0, "PORT must be a positive integer.");
+const PORT = 3002;
 app.use(express.json());
 
 // Path to persist project grouping data.

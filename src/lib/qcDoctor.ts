@@ -9,6 +9,16 @@ export const QC_DOCTOR_GLOBAL_STATUSES = [
 
 export type QCDoctorGlobalStatus = typeof QC_DOCTOR_GLOBAL_STATUSES[number];
 
+export const QC_DOCTOR_INSTALLATION_STATES = [
+  "compliant",
+  "outdated",
+  "noncompliant",
+  "uninstalled",
+  "unknown",
+] as const;
+
+export type QCDoctorInstallationState = typeof QC_DOCTOR_INSTALLATION_STATES[number];
+
 export interface QCDoctorFinding {
   severity: string;
   surface: string;
@@ -30,7 +40,7 @@ export interface QCDoctorPayload {
   };
   declared_profile: string;
   effective_profile: string;
-  installation_state: string;
+  installation_state: QCDoctorInstallationState;
   global_status: QCDoctorGlobalStatus;
   findings: QCDoctorFinding[];
   invalidation_inputs: Record<string, string>;
@@ -69,6 +79,16 @@ function requireGlobalStatus(value: unknown): QCDoctorGlobalStatus {
     throw new Error(`Unsupported ai-review-ci doctor global_status: ${value}`);
   }
   return value as QCDoctorGlobalStatus;
+}
+
+function requireInstallationState(value: unknown): QCDoctorInstallationState {
+  if (typeof value !== "string") {
+    throw new Error("ai-review-ci doctor payload field installation_state must be a string.");
+  }
+  if (!QC_DOCTOR_INSTALLATION_STATES.includes(value as QCDoctorInstallationState)) {
+    throw new Error(`Unsupported ai-review-ci doctor installation_state: ${value}`);
+  }
+  return value as QCDoctorInstallationState;
 }
 
 function parseFindings(value: unknown): QCDoctorFinding[] {
@@ -121,12 +141,15 @@ export function parseQCDoctorPayload(raw: unknown): QCDoctorPayload {
     },
     declared_profile: requireString(payload.declared_profile, "declared_profile"),
     effective_profile: requireString(payload.effective_profile, "effective_profile"),
-    installation_state: requireString(payload.installation_state, "installation_state"),
+    installation_state: requireInstallationState(payload.installation_state),
     global_status: requireGlobalStatus(payload.global_status),
     findings: parseFindings(payload.findings),
     invalidation_inputs: parseStringRecord(payload.invalidation_inputs, "invalidation_inputs"),
   };
 }
+
+const QC_DOCTOR_CHECK_RUN_FENCE_NAME = "ai-review-ci-doctor-json";
+const QC_DOCTOR_CHECK_RUN_FENCE_PATTERN = /```ai-review-ci-doctor-json[^\S\r\n]*\r?\n([\s\S]*?)```/gi;
 
 export function parseQCDoctorPayloadFromText(text: string): QCDoctorPayload {
   const trimmed = text.trim();
@@ -134,15 +157,19 @@ export function parseQCDoctorPayloadFromText(text: string): QCDoctorPayload {
     throw new Error("ai-review-ci doctor payload text is empty.");
   }
 
-  const candidates = [
-    trimmed,
-    ...Array.from(trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)).map((match) => match[1].trim()),
-  ];
+  const candidates: string[] = [];
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    candidates.push(trimmed);
+  }
 
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    candidates.push(trimmed.slice(firstBrace, lastBrace + 1));
+  for (const match of trimmed.matchAll(QC_DOCTOR_CHECK_RUN_FENCE_PATTERN)) {
+    candidates.push(match[1].trim());
+  }
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `ai-review-ci doctor payload text must be raw JSON or a fenced ${QC_DOCTOR_CHECK_RUN_FENCE_NAME} block.`
+    );
   }
 
   const errors: string[] = [];

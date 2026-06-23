@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseQCDoctorPayload, QC_DOCTOR_GLOBAL_STATUSES } from "./qcDoctor";
+import {
+  parseQCDoctorPayload,
+  parseQCDoctorPayloadFromText,
+  QC_DOCTOR_GLOBAL_STATUSES,
+  QC_DOCTOR_INSTALLATION_STATES,
+} from "./qcDoctor";
 
 const goldenDoctorPayload = {
   schema_version: 1,
@@ -15,7 +20,7 @@ const goldenDoctorPayload = {
   },
   declared_profile: "bun-playwright",
   effective_profile: "bun-playwright",
-  installation_state: "installed",
+  installation_state: "outdated",
   global_status: "stale",
   findings: [
     {
@@ -38,6 +43,7 @@ describe("parseQCDoctorPayload", () => {
     const parsed = parseQCDoctorPayload(goldenDoctorPayload);
 
     expect(parsed.global_status).toBe("stale");
+    expect(parsed.installation_state).toBe("outdated");
     expect(parsed.findings[0].surface).toBe("workflow");
     expect(parsed.findings[0].remediation_commands[0]).toContain("ai-review-ci install");
   });
@@ -53,6 +59,17 @@ describe("parseQCDoctorPayload", () => {
     }
   });
 
+  it("accepts every planned installation state without widening the schema", () => {
+    for (const installationState of QC_DOCTOR_INSTALLATION_STATES) {
+      const parsed = parseQCDoctorPayload({
+        ...goldenDoctorPayload,
+        installation_state: installationState,
+      });
+
+      expect(parsed.installation_state).toBe(installationState);
+    }
+  });
+
   it("fails loudly when schema drift removes required fields or adds an unknown status", () => {
     expect(() => parseQCDoctorPayload({
       ...goldenDoctorPayload,
@@ -63,5 +80,37 @@ describe("parseQCDoctorPayload", () => {
     delete (missingFindings as { findings?: unknown }).findings;
 
     expect(() => parseQCDoctorPayload(missingFindings)).toThrow(/findings/);
+  });
+
+  it("fails loudly when schema drift introduces an unknown installation state", () => {
+    expect(() => parseQCDoctorPayload({
+      ...goldenDoctorPayload,
+      installation_state: "installed",
+    })).toThrow(/Unsupported ai-review-ci doctor installation_state/);
+  });
+});
+
+describe("parseQCDoctorPayloadFromText", () => {
+  it("accepts raw JSON for local doctor output", () => {
+    const parsed = parseQCDoctorPayloadFromText(JSON.stringify(goldenDoctorPayload));
+
+    expect(parsed.repository.full_name).toBe("dzackgarza/github-dashboard");
+  });
+
+  it("accepts only the explicit ai-review-ci doctor check-run fence", () => {
+    const parsed = parseQCDoctorPayloadFromText(`doctor payload\n\n\`\`\`ai-review-ci-doctor-json\n${JSON.stringify(goldenDoctorPayload)}\n\`\`\``);
+
+    expect(parsed.tool.name).toBe("ai-review-ci");
+  });
+
+  it("rejects incidental JSON in prose or generic JSON fences", () => {
+    const payloadJson = JSON.stringify(goldenDoctorPayload);
+
+    expect(() => parseQCDoctorPayloadFromText(`summary before ${payloadJson} summary after`)).toThrow(
+      /raw JSON or a fenced ai-review-ci-doctor-json block/
+    );
+    expect(() => parseQCDoctorPayloadFromText(`\`\`\`json\n${payloadJson}\n\`\`\``)).toThrow(
+      /raw JSON or a fenced ai-review-ci-doctor-json block/
+    );
   });
 });

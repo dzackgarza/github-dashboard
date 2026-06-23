@@ -123,6 +123,23 @@ describe("inspectGitCheckout", () => {
     expect(checkout.unpushedCommits[0].subject).toBe("local change");
   });
 
+  it("does not report unpushed commits from unrelated local branches", () => {
+    const { clone } = initRemoteBackedClone("unrelated-branch-repo");
+
+    git(clone, ["switch", "-c", "local-topic"]);
+    writeFileSync(join(clone, "topic.txt"), "topic\n");
+    git(clone, ["add", "topic.txt"]);
+    git(clone, ["commit", "-m", "topic-only change"]);
+    git(clone, ["switch", "main"]);
+
+    const checkout = inspectGitCheckout(clone);
+
+    expect(checkout.branch).toBe("main");
+    expect(checkout.ahead).toBe(0);
+    expect(checkout.behind).toBe(0);
+    expect(checkout.unpushedCommits).toEqual([]);
+  });
+
   it("reports detached, orphaned, and linked worktree states", () => {
     const repo = initRepo("worktree-repo");
     const worktreePath = join(tempPath("worktree-holder"), "linked");

@@ -161,8 +161,9 @@ function selectGitHubRemote(worktreeRoot: string) {
   throw new Error(`No GitHub remote found for checkout ${worktreeRoot}.`);
 }
 
-function listUnpushedCommits(worktreeRoot: string): UnpushedCommit[] {
-  const output = runGit(worktreeRoot, ["log", "--branches", "--not", "--remotes", "--format=%H%x09%s"]);
+function listUnpushedCommits(worktreeRoot: string, upstream: string | null): UnpushedCommit[] {
+  const revisionRange = upstream ? ["HEAD", `^${upstream}`] : ["HEAD", "--not", "--remotes"];
+  const output = runGit(worktreeRoot, ["log", ...revisionRange, "--format=%H%x09%s"]);
   if (!output) {
     return [];
   }
@@ -202,7 +203,7 @@ export function inspectGitCheckout(path: string): LocalCheckoutStatus {
     worktree: realpathSync(gitDir) !== realpathSync(gitCommonDir),
     gitDir,
     gitCommonDir,
-    unpushedCommits: listUnpushedCommits(worktreeRoot),
+    unpushedCommits: listUnpushedCommits(worktreeRoot, status.upstream),
   };
 }
 
