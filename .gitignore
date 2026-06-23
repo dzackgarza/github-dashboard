@@ -1,3 +1,4 @@
+node_modules
 node_modules/
 build/
 dist/
@@ -6,6 +7,7 @@ coverage/
 *.log
 .env*
 !.env.example
+!.envrc
 .serena/
 data/
 test-results/

@@ -4,13 +4,22 @@ import fs from "fs";
 import assert from "node:assert/strict";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { classifyResumePacket, countUnresolvedReviewThreads, extractClosingIssueReferences } from "./src/lib/activeWork";
+import { parseQCDoctorPayloadFromText, QCDoctorGlobalStatus, QCDoctorPayload } from "./src/lib/qcDoctor";
+import {
+  LocalCheckoutInventory,
+  LocalCheckoutStatus,
+  parseScanRootsConfig,
+  scanLocalCheckouts,
+} from "./src/server/localCheckouts";
 
 dotenv.config();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 assert(GITHUB_TOKEN, "GITHUB_TOKEN is required in the process environment.");
 
 const app = express();
-const PORT = 3002;
+const PORT = Number.parseInt(process.env.PORT || "3002", 10);
+assert(Number.isInteger(PORT) && PORT > 0, "PORT must be a positive integer.");
 app.use(express.json());
 
 // Path to persist project grouping data.
@@ -158,6 +167,242 @@ async function githubFetch(urlPath: string, etagKey?: string): Promise<{ data: a
   };
 }
 
+async function githubGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `bearer ${GITHUB_TOKEN}`,
+      "Content-Type": "application/json",
+      "User-Agent": "GitHub-PR-Issue-Manager-Dashboard"
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const limit = response.headers.get("x-ratelimit-limit");
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const reset = response.headers.get("x-ratelimit-reset");
+  if (limit) globalRateLimit.limit = parseInt(limit);
+  if (remaining) globalRateLimit.remaining = parseInt(remaining);
+  if (reset) globalRateLimit.reset = parseInt(reset);
+
+  const payload = await response.json();
+  if (!response.ok || payload.errors) {
+    const message = payload.errors?.map((error: { message: string }) => error.message).join("; ") || response.statusText;
+    throw new Error(`GitHub GraphQL request failed: ${message}`);
+  }
+  return payload.data as T;
+}
+
+interface GraphQLIssueNode {
+  number: number;
+  title: string;
+  state: "OPEN" | "CLOSED";
+  url: string;
+}
+
+interface GraphQLReviewThreadNode {
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+}
+
+interface GraphQLPRNode {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  isDraft: boolean;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headRefName: string;
+  headRefOid: string;
+  baseRefName: string;
+  createdAt: string;
+  updatedAt: string;
+  closingIssuesReferences: {
+    nodes: GraphQLIssueNode[];
+  };
+  reviewThreads: {
+    nodes: GraphQLReviewThreadNode[];
+    pageInfo: {
+      hasNextPage: boolean;
+    };
+  };
+  statusCheckRollup: {
+    state: string;
+  } | null;
+}
+
+interface ActiveWorkGraphQLResponse {
+  repository: {
+    issues: {
+      nodes: GraphQLIssueNode[];
+    };
+    pullRequests: {
+      nodes: GraphQLPRNode[];
+    };
+  } | null;
+}
+
+interface CheckRunOutput {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  output?: {
+    title?: string;
+    summary?: string;
+    text?: string;
+  };
+}
+
+interface QCHealth {
+  global_status: QCDoctorGlobalStatus;
+  source: "local_doctor" | "qc_doctor_check" | "unavailable";
+  source_detail: string;
+  findings: QCDoctorPayload["findings"];
+  payload?: QCDoctorPayload;
+  error?: string;
+}
+
+function getLocalCheckoutInventory(): LocalCheckoutInventory {
+  return scanLocalCheckouts(parseScanRootsConfig(process.env.GITHUB_DASHBOARD_SCAN_ROOTS));
+}
+
+function unavailableQCHealth(fullName: string, sourceDetail: string): QCHealth {
+  return {
+    global_status: "unverifiable",
+    source: "unavailable",
+    source_detail: sourceDetail,
+    findings: [
+      {
+        severity: "error",
+        surface: "qc-doctor",
+        evidence: `No ai-review-ci doctor payload source was available for ${fullName}.`,
+        remediation_commands: [],
+      },
+    ],
+  };
+}
+
+function extractQCDoctorHealthFromCheckRuns(fullName: string, checkRuns: CheckRunOutput[]): QCHealth | null {
+  const doctorRun = checkRuns.find((run) => run.name === "qc-doctor");
+  if (!doctorRun) {
+    return null;
+  }
+
+  const text = [
+    doctorRun.output?.title,
+    doctorRun.output?.summary,
+    doctorRun.output?.text,
+  ].filter(Boolean).join("\n");
+
+  const payload = parseQCDoctorPayloadFromText(text);
+  if (payload.repository.full_name !== fullName) {
+    throw new Error(`qc-doctor payload repository ${payload.repository.full_name} does not match ${fullName}.`);
+  }
+
+  return {
+    global_status: payload.global_status,
+    source: "qc_doctor_check",
+    source_detail: `GitHub check run ${doctorRun.name}`,
+    findings: payload.findings,
+    payload,
+  };
+}
+
+function mapGraphQLCheckState(state: string | null | undefined): "success" | "failure" | "pending" | "unknown" {
+  if (state === "SUCCESS") return "success";
+  if (state === "FAILURE" || state === "ERROR") return "failure";
+  if (state === "PENDING" || state === "EXPECTED") return "pending";
+  return "unknown";
+}
+
+async function fetchCheckRunsForSha(fullName: string, sha: string): Promise<CheckRunOutput[]> {
+  const { data, status } = await githubFetch(`/repos/${fullName}/commits/${sha}/check-runs?per_page=100`);
+  if (status !== 200) {
+    throw new Error(`GitHub check runs request failed for ${fullName}@${sha} with status ${status}.`);
+  }
+  return Array.isArray(data.check_runs) ? data.check_runs : [];
+}
+
+async function fetchRepositoryActiveWork(owner: string, repo: string) {
+  const query = `
+    query RepositoryActiveWork($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        issues(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            number
+            title
+            state
+            url
+          }
+        }
+        pullRequests(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            number
+            title
+            body
+            url
+            isDraft
+            state
+            headRefName
+            headRefOid
+            baseRefName
+            createdAt
+            updatedAt
+            closingIssuesReferences(first: 20) {
+              nodes {
+                number
+                title
+                state
+                url
+              }
+            }
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                isOutdated
+                path
+                line
+              }
+              pageInfo {
+                hasNextPage
+              }
+            }
+            statusCheckRollup {
+              state
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await githubGraphQL<ActiveWorkGraphQLResponse>(query, { owner, repo });
+  if (!data.repository) {
+    throw new Error(`GitHub repository ${owner}/${repo} was not found by GraphQL.`);
+  }
+  return data.repository;
+}
+
+function matchCheckout(inventory: LocalCheckoutInventory | null, fullName: string): LocalCheckoutStatus | null {
+  return inventory?.checkouts.find((checkout) => checkout.repositoryFullName === fullName) ?? null;
+}
+
+function summarizeLocalForClassification(checkout: LocalCheckoutStatus | null) {
+  return {
+    exists: checkout !== null,
+    dirty: checkout?.dirty ?? false,
+    untracked: checkout?.untracked ?? false,
+    ahead: checkout?.ahead ?? 0,
+    behind: checkout?.behind ?? 0,
+    detached: checkout?.detached ?? false,
+    orphaned: checkout?.orphaned ?? false,
+    unpushedCommitCount: checkout?.unpushedCommits.length ?? 0,
+  };
+}
+
 // Check GITHUB_TOKEN configuration
 app.get("/api/github/config", async (req, res) => {
   try {
@@ -180,6 +425,22 @@ app.get("/api/github/config", async (req, res) => {
   } catch (err: any) {
     addLog("System", "ERROR", `Error verifying GitHub token: ${err?.message || err}.`);
     return res.status(500).json({ error: "GitHub token verification failed." });
+  }
+});
+
+// Read-only inventory of local git checkouts under configured roots.
+app.get("/api/local/checkouts", (req, res) => {
+  try {
+    return res.json(getLocalCheckoutInventory());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    addLog("Local checkouts", "ERROR", message);
+    return res.status(500).json({
+      error: {
+        kind: "local_checkout_config_error",
+        message,
+      },
+    });
   }
 });
 
@@ -352,6 +613,129 @@ app.get("/api/github/repos/:owner/:repo/prs", async (req, res) => {
   }
 });
 
+// FETCH active GitHub work plus local resumability and QC doctor projection for a repository.
+app.get("/api/github/repos/:owner/:repo/active-work", async (req, res) => {
+  const { owner, repo } = req.params;
+  const fullName = `${owner}/${repo}`;
+
+  let inventory: LocalCheckoutInventory | null = null;
+  let localConfigError: { kind: string; message: string } | null = null;
+  try {
+    inventory = getLocalCheckoutInventory();
+  } catch (error) {
+    localConfigError = {
+      kind: "local_checkout_config_error",
+      message: error instanceof Error ? error.message : String(error),
+    };
+    addLog(fullName, "ERROR", localConfigError.message);
+  }
+
+  try {
+    const repository = await fetchRepositoryActiveWork(owner, repo);
+    const checkout = matchCheckout(inventory, fullName);
+    const issueByNumber = new Map(repository.issues.nodes.map((issue) => [issue.number, issue]));
+    const enrichedPullRequests = [];
+    const resumePackets = [];
+    let repositoryQCHealth = unavailableQCHealth(fullName, "No qc-doctor check output or local ai-review-ci doctor payload was available.");
+
+    for (const pr of repository.pullRequests.nodes) {
+      const checkRuns = await fetchCheckRunsForSha(fullName, pr.headRefOid);
+      const qcFromCheck = extractQCDoctorHealthFromCheckRuns(fullName, checkRuns);
+      const qcHealth = qcFromCheck ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${pr.number}.`);
+      if (qcFromCheck) {
+        repositoryQCHealth = qcFromCheck;
+      }
+
+      const closingIssueNumbers = new Set<number>();
+      const closingIssues = [...pr.closingIssuesReferences.nodes];
+      for (const issue of closingIssues) {
+        closingIssueNumbers.add(issue.number);
+      }
+      for (const ref of extractClosingIssueReferences(pr.body || "", fullName)) {
+        if (ref.owner === owner && ref.repo === repo && !closingIssueNumbers.has(ref.number)) {
+          const issue = issueByNumber.get(ref.number);
+          closingIssues.push(issue ?? {
+            number: ref.number,
+            title: `Issue #${ref.number}`,
+            state: "OPEN",
+            url: `https://github.com/${fullName}/issues/${ref.number}`,
+          });
+          closingIssueNumbers.add(ref.number);
+        }
+      }
+
+      const unresolvedReviewThreads = countUnresolvedReviewThreads(pr.reviewThreads.nodes);
+      const checkState = mapGraphQLCheckState(pr.statusCheckRollup?.state);
+      const localClassificationInput = summarizeLocalForClassification(checkout);
+      const linkedIssues = closingIssues.length > 0 ? closingIssues : [null];
+
+      for (const linkedIssue of linkedIssues) {
+        resumePackets.push({
+          repository: fullName,
+          issue: linkedIssue,
+          pullRequest: {
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            state: pr.state,
+            draft: pr.isDraft,
+            headRefName: pr.headRefName,
+            headSha: pr.headRefOid,
+            baseRefName: pr.baseRefName,
+          },
+          local: checkout,
+          qc: qcHealth,
+          checkState,
+          unresolvedReviewThreads,
+          reviewThreadsTruncated: pr.reviewThreads.pageInfo.hasNextPage,
+          classification: classifyResumePacket({
+            issueState: linkedIssue ? (linkedIssue.state === "OPEN" ? "open" : "closed") : null,
+            prState: pr.state === "OPEN" ? "open" : "closed",
+            prDraft: pr.isDraft,
+            checkState,
+            unresolvedReviewThreads,
+            local: localClassificationInput,
+            qcGlobalStatus: qcHealth.global_status,
+          }),
+        });
+      }
+
+      enrichedPullRequests.push({
+        ...pr,
+        closingIssues,
+        checkRuns: checkRuns.map((run) => ({
+          name: run.name,
+          status: run.status,
+          conclusion: run.conclusion,
+        })),
+        checkState,
+        unresolvedReviewThreads,
+        reviewThreadsTruncated: pr.reviewThreads.pageInfo.hasNextPage,
+        qc: qcHealth,
+      });
+    }
+
+    return res.json({
+      repository: fullName,
+      local: {
+        checkout,
+        scanRoots: inventory?.scanRoots ?? [],
+        rootErrors: inventory?.rootErrors ?? [],
+        configError: localConfigError,
+      },
+      qc: repositoryQCHealth,
+      activeWork: {
+        issues: repository.issues.nodes,
+        pullRequests: enrichedPullRequests,
+      },
+      resumePackets,
+    });
+  } catch (error) {
+    addLog(fullName, "ERROR", `Active-work projection failed: ${error instanceof Error ? error.message : error}`);
+    return res.status(500).json({ error: "GitHub active-work projection failed." });
+  }
+});
+
 // FETCH Branches for Repo-Specific Dashboard
 app.get("/api/github/repos/:owner/:repo/branches", async (req, res) => {
   const { owner, repo } = req.params;
@@ -483,20 +867,81 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
     const headSha = prDetailsRes.data.head.sha;
     assert(headSha, "GitHub pull request response must include head.sha.");
 
-    const checksRes = await githubFetch(`/repos/${fullName}/commits/${headSha}/check-suites`);
-    if (checksRes.status !== 200) {
-      addLog(fullName, "ERROR", `GitHub check suite request failed for #${number}.`);
-      return res.status(502).json({ error: "GitHub check suite request failed." });
-    }
+    const graph = await githubGraphQL<{
+      repository: {
+        pullRequest: GraphQLPRNode | null;
+      } | null;
+    }>(`
+      query PullRequestControlPlane($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            number
+            title
+            body
+            url
+            isDraft
+            state
+            headRefName
+            headRefOid
+            baseRefName
+            createdAt
+            updatedAt
+            closingIssuesReferences(first: 20) {
+              nodes {
+                number
+                title
+                state
+                url
+              }
+            }
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                isOutdated
+                path
+                line
+              }
+              pageInfo {
+                hasNextPage
+              }
+            }
+            statusCheckRollup {
+              state
+            }
+          }
+        }
+      }
+    `, { owner, repo, number: Number.parseInt(number, 10) });
 
-    const runStatusList = checksRes.data.check_suites.map((sh: any) => ({
-      name: sh.app?.name || "Workflow run Check",
-      status: sh.status,
-      elapsed: "Active sync",
-      conclusion: sh.conclusion
+    const prGraph = graph.repository?.pullRequest;
+    assert(prGraph, `GitHub GraphQL pull request #${number} was not found.`);
+
+    const checkRuns = await fetchCheckRunsForSha(fullName, headSha);
+    const runStatusList = checkRuns.map((run) => ({
+      name: run.name,
+      status: run.status,
+      elapsed: "GitHub check run",
+      conclusion: run.conclusion ?? undefined,
+      logs: [run.output?.title, run.output?.summary, run.output?.text].filter(Boolean).join("\n")
     }));
 
-    const state = checksRes.data.check_suites[0]?.conclusion || "pending";
+    const checkState = mapGraphQLCheckState(prGraph.statusCheckRollup?.state);
+    const ciState = checkState === "unknown" ? "pending" : checkState;
+    const qcHealth = extractQCDoctorHealthFromCheckRuns(fullName, checkRuns)
+      ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${number}.`);
+    const closingIssueNumbers = new Set(prGraph.closingIssuesReferences.nodes.map((issue) => issue.number));
+    const closingIssues = [...prGraph.closingIssuesReferences.nodes];
+    for (const ref of extractClosingIssueReferences(prDetailsRes.data.body || "", fullName)) {
+      if (ref.owner === owner && ref.repo === repo && !closingIssueNumbers.has(ref.number)) {
+        closingIssues.push({
+          number: ref.number,
+          title: `Issue #${ref.number}`,
+          state: "OPEN",
+          url: `https://github.com/${fullName}/issues/${ref.number}`,
+        });
+        closingIssueNumbers.add(ref.number);
+      }
+    }
 
     const liveFiles = filesRes.data.map((f: any) => ({
       file: f.filename,
@@ -517,13 +962,17 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
       updated_at: prDetailsRes.data.updated_at,
       base_branch: prDetailsRes.data.base.ref,
       head_branch: prDetailsRes.data.head.ref,
+      is_draft: prGraph.isDraft,
+      closing_issues: closingIssues,
       diff: liveFiles,
       ci_status: {
-        state: state === "success" ? "success" : state === "failure" ? "failure" : "pending",
+        state: ciState,
         runs: runStatusList,
-        unresolved_threads_count: prDetailsRes.data?.review_comments || 0,
+        unresolved_threads_count: countUnresolvedReviewThreads(prGraph.reviewThreads.nodes),
         security_alerts_count: 0
-      }
+      },
+      review_threads_truncated: prGraph.reviewThreads.pageInfo.hasNextPage,
+      qc_health: qcHealth
     });
 
   } catch (err: any) {

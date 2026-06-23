@@ -20,7 +20,9 @@ import {
   Terminal,
   Activity,
   History,
-  Workflow
+  Workflow,
+  Link2,
+  ShieldCheck
 } from "lucide-react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { PullRequest, DiffFile, Comment } from "../types";
@@ -124,6 +126,18 @@ export default function PRDetailView({
     runs: [],
     unresolved_threads_count: 0,
     security_alerts_count: 0
+  };
+  const closingIssues = prDetail?.closing_issues || [];
+  const qcHealth = prDetail?.qc_health || null;
+
+  const qcClassName = (status?: string) => {
+    if (status === "current" || status === "intentional_exception") {
+      return "text-emerald-300 bg-emerald-950/30 border-emerald-900";
+    }
+    if (status === "stale" || status === "unverifiable") {
+      return "text-amber-300 bg-amber-950/30 border-amber-900";
+    }
+    return "text-red-300 bg-red-950/30 border-red-900";
   };
 
   const renderDiffLineElement = (line: string, index: number) => {
@@ -443,6 +457,49 @@ export default function PRDetailView({
             <div className="flex-1 bg-[#252526] border-l border-[#3e3e3e] flex flex-col justify-between select-none overflow-y-auto custom-scrollbar p-5 space-y-5 min-w-0">
               
               <div className="space-y-4">
+                <div className="space-y-2 pb-3.5 border-b border-[#3e3e3e]">
+                  <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
+                    <Link2 size={12} className="text-purple-400" />
+                    <span>Claimed Issue Work</span>
+                  </span>
+                  <div className="bg-[#1b1b1c] p-2.5 rounded border border-gray-800/60 text-[10.5px] font-mono space-y-2">
+                    {closingIssues.length === 0 ? (
+                      <div className="text-gray-500">No closing issue claims found.</div>
+                    ) : (
+                      closingIssues.map((issue) => (
+                        <a
+                          key={issue.number}
+                          href={issue.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block text-gray-300 hover:text-white break-words"
+                        >
+                          #{issue.number} {issue.title}
+                        </a>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2 pb-3.5 border-b border-[#3e3e3e]">
+                  <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
+                    <ShieldCheck size={12} className="text-emerald-400" />
+                    <span>QC Doctor</span>
+                  </span>
+                  <div className="bg-[#1b1b1c] p-2.5 rounded border border-gray-800/60 text-[10.5px] font-mono space-y-2">
+                    {qcHealth ? (
+                      <>
+                        <div className={`inline-flex px-2 py-0.5 rounded border font-bold ${qcClassName(qcHealth.global_status)}`}>
+                          {qcHealth.global_status}
+                        </div>
+                        <div className="text-gray-500 break-words">{qcHealth.source_detail}</div>
+                      </>
+                    ) : (
+                      <div className="text-gray-500">QC doctor projection not loaded.</div>
+                    )}
+                  </div>
+                </div>
+
                 {/* Sidebar Header Section 1: Merge branches pointer details */}
                 <div className="space-y-2 pb-3.5 border-b border-[#3e3e3e]">
                   <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase block">
