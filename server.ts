@@ -5,13 +5,19 @@ import assert from "node:assert/strict";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { classifyResumePacket, countUnresolvedReviewThreads, extractClosingIssueReferences } from "./src/lib/activeWork";
-import { parseQCDoctorPayloadFromText, QCDoctorGlobalStatus, QCDoctorPayload } from "./src/lib/qcDoctor";
 import {
   LocalCheckoutInventory,
   LocalCheckoutStatus,
   parseScanRootsConfig,
   scanLocalCheckouts,
 } from "./src/server/localCheckouts";
+import {
+  CheckRunOutput,
+  extractQCDoctorHealthFromCheckRuns,
+  QCHealth,
+  resolveQCHealthForProjection,
+  unavailableQCHealth,
+} from "./src/server/qcHealth";
 
 dotenv.config();
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
@@ -244,70 +250,8 @@ interface ActiveWorkGraphQLResponse {
   } | null;
 }
 
-interface CheckRunOutput {
-  name: string;
-  status: string;
-  conclusion: string | null;
-  output?: {
-    title?: string;
-    summary?: string;
-    text?: string;
-  };
-}
-
-interface QCHealth {
-  global_status: QCDoctorGlobalStatus;
-  source: "local_doctor" | "qc_doctor_check" | "unavailable";
-  source_detail: string;
-  findings: QCDoctorPayload["findings"];
-  payload?: QCDoctorPayload;
-  error?: string;
-}
-
 function getLocalCheckoutInventory(): LocalCheckoutInventory {
   return scanLocalCheckouts(parseScanRootsConfig(process.env.GITHUB_DASHBOARD_SCAN_ROOTS));
-}
-
-function unavailableQCHealth(fullName: string, sourceDetail: string): QCHealth {
-  return {
-    global_status: "unverifiable",
-    source: "unavailable",
-    source_detail: sourceDetail,
-    findings: [
-      {
-        severity: "error",
-        surface: "qc-doctor",
-        evidence: `No ai-review-ci doctor payload source was available for ${fullName}.`,
-        remediation_commands: [],
-      },
-    ],
-  };
-}
-
-function extractQCDoctorHealthFromCheckRuns(fullName: string, checkRuns: CheckRunOutput[]): QCHealth | null {
-  const doctorRun = checkRuns.find((run) => run.name === "qc-doctor");
-  if (!doctorRun) {
-    return null;
-  }
-
-  const text = [
-    doctorRun.output?.title,
-    doctorRun.output?.summary,
-    doctorRun.output?.text,
-  ].filter(Boolean).join("\n");
-
-  const payload = parseQCDoctorPayloadFromText(text);
-  if (payload.repository.full_name !== fullName) {
-    throw new Error(`qc-doctor payload repository ${payload.repository.full_name} does not match ${fullName}.`);
-  }
-
-  return {
-    global_status: payload.global_status,
-    source: "qc_doctor_check",
-    source_detail: `GitHub check run ${doctorRun.name}`,
-    findings: payload.findings,
-    payload,
-  };
 }
 
 function mapGraphQLCheckState(state: string | null | undefined): "success" | "failure" | "pending" | "unknown" {
@@ -635,13 +579,17 @@ app.get("/api/github/repos/:owner/:repo/active-work", async (req, res) => {
     const issueByNumber = new Map(repository.issues.nodes.map((issue) => [issue.number, issue]));
     const enrichedPullRequests = [];
     const resumePackets = [];
-    let repositoryQCHealth = unavailableQCHealth(fullName, "No qc-doctor check output or local ai-review-ci doctor payload was available.");
+    const localQCHealth = checkout ? resolveQCHealthForProjection(fullName, checkout, []) : null;
+    let repositoryQCHealth = localQCHealth
+      ?? unavailableQCHealth(fullName, "No qc-doctor check output or local ai-review-ci doctor payload was available.");
 
     for (const pr of repository.pullRequests.nodes) {
       const checkRuns = await fetchCheckRunsForSha(fullName, pr.headRefOid);
-      const qcFromCheck = extractQCDoctorHealthFromCheckRuns(fullName, checkRuns);
-      const qcHealth = qcFromCheck ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${pr.number}.`);
-      if (qcFromCheck) {
+      const qcFromCheck = checkout ? null : extractQCDoctorHealthFromCheckRuns(fullName, checkRuns);
+      const qcHealth = localQCHealth
+        ?? qcFromCheck
+        ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${pr.number}.`);
+      if (!localQCHealth && qcFromCheck) {
         repositoryQCHealth = qcFromCheck;
       }
 
@@ -853,6 +801,12 @@ app.post("/api/github/repos/:owner/:repo/issues/:number/comments", async (req, r
 app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) => {
   const { owner, repo, number } = req.params;
   const fullName = `${owner}/${repo}`;
+  let checkout: LocalCheckoutStatus | null = null;
+  try {
+    checkout = matchCheckout(getLocalCheckoutInventory(), fullName);
+  } catch (error) {
+    addLog(fullName, "ERROR", `Local checkout inventory unavailable for PR detail QC projection: ${error instanceof Error ? error.message : error}`);
+  }
 
   try {
     const prDetailsRes = await githubFetch(`/repos/${fullName}/pulls/${number}`);
@@ -926,8 +880,7 @@ app.get("/api/github/repos/:owner/:repo/prs/:number/details", async (req, res) =
 
     const checkState = mapGraphQLCheckState(prGraph.statusCheckRollup?.state);
     const ciState = checkState === "unknown" ? "pending" : checkState;
-    const qcHealth = extractQCDoctorHealthFromCheckRuns(fullName, checkRuns)
-      ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${number}.`);
+    const qcHealth = resolveQCHealthForProjection(fullName, checkout, checkRuns);
     const closingIssueNumbers = new Set(prGraph.closingIssuesReferences.nodes.map((issue) => issue.number));
     const closingIssues = [...prGraph.closingIssuesReferences.nodes];
     for (const ref of extractClosingIssueReferences(prDetailsRes.data.body || "", fullName)) {
