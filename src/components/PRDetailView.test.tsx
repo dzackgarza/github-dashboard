@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -20,7 +21,8 @@ vi.mock("react-resizable-panels", async (importOriginal) => {
     Panel: (props: any) => {
       capturedPanels.push(props);
       return <div data-testid="mock-panel" data-min-size={props.minSize} data-max-size={props.maxSize}>{props.children}</div>;
-    }
+    },
+    Separator: (props: any) => <div data-testid="mock-panel-resize-handle" {...props} />
   };
 });
 

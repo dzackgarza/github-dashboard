@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const testScanRoot = process.cwd();
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 120_000,
@@ -13,7 +15,11 @@ export default defineConfig({
   webServer: {
     command: "direnv exec . npm run dev",
     url: "http://127.0.0.1:3002",
-    reuseExistingServer: true,
+    reuseExistingServer: false,
+    env: {
+      ...process.env,
+      GITHUB_DASHBOARD_SCAN_ROOTS: testScanRoot,
+    },
     timeout: 120_000,
   },
   projects: [
