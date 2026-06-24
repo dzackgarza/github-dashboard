@@ -1182,7 +1182,7 @@ app.get("/api/github/sync-logs", (_req, res) => {
 });
 
 // Terminal error handler. Async routes are wrapped in asyncHandler, which forwards any
-// rejection here via next(err). This is the single 500 responder; per-route catch→500
+// rejection here via next(err). This is the single 500 responder; per-route catch-to-500
 // blocks were removed so failures surface through one boundary instead of being
 // swallowed or double-handled.
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
