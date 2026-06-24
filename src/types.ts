@@ -1,3 +1,7 @@
+import type { QCHealth } from "./lib/qcDoctor";
+
+export type { QCHealth };
+
 export interface User {
   login: string;
   avatar_url: string;
@@ -65,29 +69,6 @@ export interface CIStatus {
   runs: CIRun[];
   unresolved_threads_count: number;
   security_alerts_count: number;
-}
-
-export type QCDoctorGlobalStatus =
-  | "current"
-  | "stale"
-  | "misconfigured"
-  | "blocked_upstream"
-  | "unverifiable"
-  | "intentional_exception";
-
-export interface QCDoctorFinding {
-  severity: string;
-  surface: string;
-  evidence: string;
-  remediation_commands: string[];
-}
-
-export interface QCHealth {
-  global_status: QCDoctorGlobalStatus;
-  source: "local_doctor" | "qc_doctor_check" | "unavailable";
-  source_detail: string;
-  findings: QCDoctorFinding[];
-  error?: string;
 }
 
 export interface LocalCheckoutStatus {

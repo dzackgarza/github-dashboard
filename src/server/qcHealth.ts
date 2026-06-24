@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
-import {
-  parseQCDoctorPayloadFromText,
-  QCDoctorFinding,
-  QCDoctorGlobalStatus,
+import { parseQCDoctorPayloadFromText } from "../lib/qcDoctor";
+import type {
+  QCHealth,
   QCDoctorPayload,
 } from "../lib/qcDoctor";
 import { LocalCheckoutStatus, normalizeGitHubRemote } from "./localCheckouts";
+
+export type { QCHealth };
 
 export interface CheckRunOutput {
   name: string;
@@ -16,22 +17,6 @@ export interface CheckRunOutput {
     summary?: string;
     text?: string;
   };
-}
-
-export interface QCHealthFinding {
-  severity: QCDoctorFinding["severity"];
-  surface: QCDoctorFinding["surface"] | "doctor_command" | "qc-doctor";
-  evidence: string;
-  remediation_commands: string[];
-}
-
-export interface QCHealth {
-  global_status: QCDoctorGlobalStatus;
-  source: "local_doctor" | "qc_doctor_check" | "unavailable";
-  source_detail: string;
-  findings: QCHealthFinding[];
-  payload?: QCDoctorPayload;
-  error?: string;
 }
 
 export interface CommandResult {
@@ -121,7 +106,7 @@ function formatCommandFailure(invocation: DoctorCommandInvocation, result: Comma
   const stderr = result.stderr.trim();
   const stdout = result.stdout.trim();
   return [
-    `Local ai-review-ci doctor command failed to produce a parseable PR #113 payload.`,
+    `Local ai-review-ci doctor command failed to produce a parseable doctor payload.`,
     `command: ${invocation.command} ${invocation.args.join(" ")}`,
     exitDetail,
     `parse error: ${parseDetail}`,

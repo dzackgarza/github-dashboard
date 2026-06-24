@@ -28,7 +28,8 @@
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.11.2",
     "vite": "^6.2.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",

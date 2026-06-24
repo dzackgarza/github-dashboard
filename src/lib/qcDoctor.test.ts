@@ -88,7 +88,7 @@ const oldSchemaPayload = {
   tool: {
     name: "ai-review-ci",
     version: "0.0.0",
-    ref: "pull/113/head",
+    ref: "legacy-doctor-ref",
   },
   repository: {
     root: "/tmp/github-dashboard-mvp-pr",
@@ -106,7 +106,7 @@ const oldSchemaPayload = {
 };
 
 describe("parseQCDoctorPayload", () => {
-  it("accepts the PR #113 doctor contract and preserves global_status as authoritative data", () => {
+  it("accepts the current doctor contract and preserves global_status as authoritative data", () => {
     const parsed = parseQCDoctorPayload(goldenDoctorPayload);
 
     expect(parsed.global_status).toBe("stale");
@@ -150,11 +150,11 @@ describe("parseQCDoctorPayload", () => {
     expect(() => parseQCDoctorPayload({
       ...goldenDoctorPayload,
       global_status: "outdated",
-    })).toThrow(/Unsupported ai-review-ci doctor global_status/);
+    })).toThrow(/schema drift: global_status/);
     expect(() => parseQCDoctorPayload({
       ...goldenDoctorPayload,
       installation_state: "installed",
-    })).toThrow(/Unsupported ai-review-ci doctor installation_state/);
+    })).toThrow(/schema drift: installation_state/);
   });
 });
 
