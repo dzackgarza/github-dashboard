@@ -67,15 +67,21 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
   if (selectedRepoFullName) {
     invariant(selectedRepo, `Repository ${selectedRepoFullName} was not found.`);
   }
-  const activeProjectDashboard = selectedProjectId
-    ? projectTags.find((project) => project.id === selectedProjectId)
-    : null;
+  const activeProjectDashboard = useMemo(
+    () => selectedProjectId
+      ? projectTags.find((project) => project.id === selectedProjectId) ?? null
+      : null,
+    [selectedProjectId, projectTags]
+  );
   if (selectedProjectId) {
     invariant(activeProjectDashboard, `Project ${selectedProjectId} was not found.`);
   }
-  const activeProjectRepos = activeProjectDashboard
-    ? repos.filter((repo) => activeProjectDashboard.repos.includes(repo.full_name))
-    : [];
+  const activeProjectRepos = useMemo(
+    () => activeProjectDashboard
+      ? repos.filter((repo) => activeProjectDashboard.repos.includes(repo.full_name))
+      : [],
+    [activeProjectDashboard, repos]
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -202,7 +208,7 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
     return () => {
       cancelled = true;
     };
-  }, [activeProjectDashboard, activeProjectRepos.map((repo) => repo.full_name).join("|")]);
+  }, [activeProjectDashboard, activeProjectRepos]);
 
   const filteredRepos = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();

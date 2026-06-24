@@ -1,4 +1,4 @@
-import React, { createContext, useContext } from "react";
+import { createContext, useContext } from "react";
 import { Repo, ProjectTag, SyncLog, RateLimit, Tab, User } from "../types";
 
 export interface WorkspaceContextType {

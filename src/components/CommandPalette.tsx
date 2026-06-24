@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Terminal, Command, Filter, Folder, Search, X } from "lucide-react";
-import { ProjectTag, Repo, Tab } from "../types";
+import { ProjectTag, Tab } from "../types";
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   projectTags: ProjectTag[];
-  repos: Repo[];
   onToggleSidebar: () => void;
   onToggleExplorer: () => void;
   onSelectProjectFilter: (tagId: string) => void;
@@ -29,7 +28,6 @@ export default function CommandPalette({
   isOpen,
   onClose,
   projectTags,
-  repos,
   onToggleSidebar,
   onToggleExplorer,
   onSelectProjectFilter,

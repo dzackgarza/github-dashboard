@@ -6,8 +6,6 @@ import {
   FolderOpen,
   GitPullRequest,
   CheckCircle2,
-  AlertCircle,
-  Hash,
   Search,
   FolderGit,
   Tags,
@@ -30,7 +28,6 @@ interface VSCodeSidebarProps {
   repos: Repo[];
   projectTags: ProjectTag[];
   syncTimestamps: Record<string, string>;
-  isSyncing: Record<string, boolean>;
   onSelectIssue: (owner: string, repoName: string, issue: Issue) => void;
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
@@ -46,7 +43,6 @@ interface VSCodeSidebarProps {
   onClose?: () => void;
   selectedProjectFilter: string;
   activeProjectDashboardId: string | null;
-  onSelectProjectFilter: (filterId: string) => void;
 }
 
 export default function VSCodeSidebar({
@@ -54,7 +50,6 @@ export default function VSCodeSidebar({
   repos,
   projectTags,
   syncTimestamps,
-  isSyncing,
   onSelectIssue,
   onSelectPR,
   onAddProjectTag,
@@ -69,8 +64,7 @@ export default function VSCodeSidebar({
   activeTabId,
   onClose,
   selectedProjectFilter,
-  activeProjectDashboardId,
-  onSelectProjectFilter
+  activeProjectDashboardId
 }: VSCodeSidebarProps) {
   // Navigation / Collapsible section states
   const [reposExpanded, setReposExpanded] = useState(true);

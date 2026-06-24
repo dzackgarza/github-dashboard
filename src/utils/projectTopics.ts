@@ -24,6 +24,7 @@ export function assertValidProjectTopicName(value: string): asserts value is str
   if (!PROJECT_TOPIC_PATTERN.test(value)) {
     throw new Error(`Invalid GitHub topic "${value}". Topics must be lowercase alphanumeric slugs with hyphens and at most 50 characters.`);
   }
+  return void 0;
 }
 
 function colorIndexForTopic(topic: string): number {
@@ -46,7 +47,9 @@ export function deriveProjectTagsFromRepos(repos: RepoTopicsSource[]): ProjectTa
       const reposForTopic = repoNamesByTopic.get(topic) ?? [];
       reposForTopic.push(repo.full_name);
       repoNamesByTopic.set(topic, reposForTopic);
+      return void 0;
     });
+    return void 0;
   });
 
   return [...repoNamesByTopic.entries()]

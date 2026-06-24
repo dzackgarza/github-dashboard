@@ -5,12 +5,8 @@ import { toString } from "mdast-util-to-string";
 const DEFAULT_EXCERPT_LENGTH = 120;
 
 function toText(markdown: string): string {
-  try {
-    const root = unified().use(remarkParse).parse(markdown);
-    return toString(root).replace(/\s+/g, " ").trim();
-  } catch {
-    return markdown.replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
-  }
+  const root = unified().use(remarkParse).parse(markdown);
+  return toString(root).replace(/\s+/g, " ").trim();
 }
 
 function truncate(text: string, maxLength: number): string {

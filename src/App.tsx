@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Github, RefreshCw } from "lucide-react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { RefreshCw } from "lucide-react";
 import VSCodeActivityBar from "./components/VSCodeActivityBar";
 import VSCodeSidebar from "./components/VSCodeSidebar";
 import WelcomeDashboard from "./components/WelcomeDashboard";
@@ -35,6 +35,7 @@ function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: str
   const [issue, setIssue] = useState<Issue | null>(params.data ?? null);
   const hasParams = Boolean(params.owner && params.repoName && params.number);
   const [loading, setLoading] = useState(hasParams && !params.data);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -44,25 +45,28 @@ function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: str
     }
 
     setLoading(true);
-    fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues/${params.number}`)
-      .then((r) => {
-        if (!r.ok) {
-          throw new Error(`Issue endpoint failed with ${r.status}`);
+    setLoadError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/issues/${params.number}`);
+        if (!response.ok) {
+          throw new Error(`Issue endpoint failed with ${response.status}`);
         }
-        return r.json() as Promise<Issue>;
-      })
-      .then((data: Issue) => {
-        if (!active) return;
-        setIssue(data);
-        api.updateParameters({ data });
-      })
-      .catch((err) => {
-        console.error("Failed to load issue summary", err);
-        setIssue(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+        const data = await response.json() as Issue;
+        if (active) {
+          setIssue(data);
+          api.updateParameters({ data });
+        }
+      } catch (err) {
+        if (active) {
+          setLoadError(`Failed to load issue #${params.number}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    })();
     return () => {
       active = false;
     };
@@ -85,10 +89,18 @@ function DockviewIssueWrapper({ params, api }: IDockviewPanelProps<{ owner?: str
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-red-400 bg-[#1e1e1e] px-4 text-center">
+        {loadError}
+      </div>
+    );
+  }
+
   if (!issue) {
     return (
-      <div className="flex items-center justify-center h-full text-xs text-red-500 bg-[#1e1e1e]">
-        Failed loading item details. Please check the network connectivity or Git status.
+      <div className="flex items-center justify-center h-full text-xs text-gray-500 bg-[#1e1e1e]">
+        No issue details are available for this panel.
       </div>
     );
   }
@@ -123,6 +135,7 @@ function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string
   const [pr, setPr] = useState<PullRequest | null>(params.data ?? null);
   const hasParams = Boolean(params.owner && params.repoName && params.number);
   const [loading, setLoading] = useState(hasParams && !params.data);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -132,25 +145,28 @@ function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string
     }
 
     setLoading(true);
-    fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs/${params.number}`)
-      .then((r) => {
-        if (!r.ok) {
-          throw new Error(`PR endpoint failed with ${r.status}`);
+    setLoadError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs/${params.number}`);
+        if (!response.ok) {
+          throw new Error(`PR endpoint failed with ${response.status}`);
         }
-        return r.json() as Promise<PullRequest>;
-      })
-      .then((data: PullRequest) => {
-        if (!active) return;
-        setPr(data);
-        api.updateParameters({ data });
-      })
-      .catch((err) => {
-        console.error("Failed to load PR summary", err);
-        setPr(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+        const data = await response.json() as PullRequest;
+        if (active) {
+          setPr(data);
+          api.updateParameters({ data });
+        }
+      } catch (err) {
+        if (active) {
+          setLoadError(`Failed to load pull request #${params.number}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    })();
     return () => {
       active = false;
     };
@@ -173,10 +189,18 @@ function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-red-400 bg-[#1e1e1e] px-4 text-center">
+        {loadError}
+      </div>
+    );
+  }
+
   if (!pr) {
     return (
-      <div className="flex items-center justify-center h-full text-xs text-red-500 bg-[#1e1e1e]">
-        Failed loading item details. Please check the network connectivity or Git status.
+      <div className="flex items-center justify-center h-full text-xs text-gray-500 bg-[#1e1e1e]">
+        No pull request details are available for this panel.
       </div>
     );
   }
@@ -193,7 +217,7 @@ function DockviewPRWrapper({ params, api }: IDockviewPanelProps<{ owner?: string
 
         const res = await fetch(`/api/github/repos/${params.owner}/${params.repoName}/prs/${params.number}`);
         if (!res.ok) {
-          return;
+          throw new Error(`PR refresh failed with ${res.status}`);
         }
         const data = await res.json() as PullRequest;
         setPr(data);
@@ -209,7 +233,6 @@ export default function App() {
   // Navigation / Layout views
   const [activeView, setActiveView] = useState<"explorer" | "sync" | "settings">("explorer");
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [centerViewType, setCenterViewType] = useState<"explorer" | "dashboard">("explorer");
 
   const handleToggleView = (view: "explorer" | "sync" | "settings") => {
     if (activeView === view) {
@@ -245,8 +268,6 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string>("welcome");
 
   // Multi-item details loading on demand
-  const [activeIssue, setActiveIssue] = useState<{ owner: string; repo: string; data: Issue } | null>(null);
-  const [activePR, setActivePR] = useState<{ owner: string; repo: string; data: PullRequest } | null>(null);
 
   // Global actions loading block
   const [isSyncingGlobal, setIsSyncingGlobal] = useState(false);
@@ -264,11 +285,6 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // Init fetch: config verify, repos list, projects metadata and sync logs
-  useEffect(() => {
-    bootstrapWorkspace();
-  }, []);
-
   useEffect(() => {
     reposRef.current = repos;
   }, [repos]);
@@ -277,27 +293,7 @@ export default function App() {
     projectTagsRef.current = projectTags;
   }, [projectTags]);
 
-  const bootstrapWorkspace = async () => {
-    try {
-      // 1) Verify API config settings
-      const configRes = await fetch("/api/github/config");
-      const config = await configRes.json();
-      setIsTokenConfigured(config.configured);
-      setGithubUser(config.user);
-
-      // 2) Load core repos list
-      setIsInitialRepoLoadRunning(true);
-      await fetchRepos();
-      setIsInitialRepoLoadRunning(false);
-
-      // 3) Pull developer sync logs & limits
-      await refreshSyncDiagnostics();
-    } catch (err) {
-      console.error("Workspace boot process error", err);
-    }
-  };
-
-  const fetchRepos = async () => {
+  const fetchRepos = useCallback(async () => {
     try {
       const res = await fetch("/api/github/repos");
       const data = await res.json();
@@ -315,9 +311,9 @@ export default function App() {
     } catch (err) {
       console.error("Error gathering repos", err);
     }
-  };
+  }, []);
 
-  const refreshSyncDiagnostics = async () => {
+  const refreshSyncDiagnostics = useCallback(async () => {
     try {
       const logsRes = await fetch("/api/github/sync-logs");
       const logs = await logsRes.json();
@@ -329,10 +325,30 @@ export default function App() {
     } catch (err) {
       console.error("Error refreshing sync diagnostics and rate limits", err);
     }
-  };
+  }, []);
+
+  const bootstrapWorkspace = useCallback(async () => {
+    try {
+      // 1) Verify API config settings
+      const configRes = await fetch("/api/github/config");
+      const config = await configRes.json();
+      setIsTokenConfigured(config.configured);
+      setGithubUser(config.user);
+
+      // 2) Load core repos list
+      setIsInitialRepoLoadRunning(true);
+      await fetchRepos();
+      setIsInitialRepoLoadRunning(false);
+
+      // 3) Pull developer sync logs & limits
+      await refreshSyncDiagnostics();
+    } catch (err) {
+      console.error("Workspace boot process error", err);
+    }
+  }, [fetchRepos, refreshSyncDiagnostics]);
 
   // Perform force incremental GET syncing for a repo using Server-side ETags
-  const handleForceSyncRepo = async (owner: string, repoName: string) => {
+  const handleForceSyncRepo = useCallback(async (owner: string, repoName: string) => {
     const fullName = `${owner}/${repoName}`;
     setIsSyncing((prev) => ({ ...prev, [fullName]: true }));
 
@@ -350,24 +366,22 @@ export default function App() {
       setIsSyncing((prev) => ({ ...prev, [fullName]: false }));
       await refreshSyncDiagnostics();
     }
-  };
+  }, [fetchRepos, refreshSyncDiagnostics]);
 
   // Trigger full delta scan of workspace
-  const handleGlobalSync = async () => {
+  const handleGlobalSync = useCallback(async () => {
     setIsSyncingGlobal(true);
     try {
       for (const repo of repos) {
         await handleForceSyncRepo(repo.owner.login, repo.name);
       }
-    } catch {
-      // Done
     } finally {
       setIsSyncingGlobal(false);
     }
-  };
+  }, [repos, handleForceSyncRepo]);
 
   // OPEN standard editor tab
-  const handleOpenTab = (
+  const handleOpenTab = useCallback((
     id: string,
     type: Tab["type"],
     title: string,
@@ -403,9 +417,9 @@ export default function App() {
         });
       }
     }
-  };
+  }, []);
 
-  const handleOpenRepo = (repoFullName: string) => {
+  const handleOpenRepo = useCallback((repoFullName: string) => {
     const repo = reposRef.current.find((item) => item.full_name === repoFullName);
     if (!repo) {
       throw new Error(`Repository ${repoFullName} was not found.`);
@@ -421,9 +435,9 @@ export default function App() {
       undefined,
       { explorerMode: "repo", repoFullName }
     );
-  };
+  }, [handleOpenTab]);
 
-  const handleOpenProject = (projectId: string) => {
+  const handleOpenProject = useCallback((projectId: string) => {
     const project = projectTagsRef.current.find((item) => item.id === projectId);
     if (!project) {
       throw new Error(`Project ${projectId} was not found.`);
@@ -439,9 +453,9 @@ export default function App() {
       undefined,
       { explorerMode: "project", projectId }
     );
-  };
+  }, [handleOpenTab]);
 
-  const handleOpenRepositoryExplorer = () => {
+  const handleOpenRepositoryExplorer = useCallback(() => {
     setActiveRepoFullName(null);
     setActiveProjectDashboardId(null);
     handleOpenTab(
@@ -453,9 +467,9 @@ export default function App() {
       undefined,
       { explorerMode: "repositories" }
     );
-  };
+  }, [handleOpenTab]);
 
-  const handleOpenProjectsDashboard = () => {
+  const handleOpenProjectsDashboard = useCallback(() => {
     setActiveRepoFullName(null);
     setActiveProjectDashboardId(null);
     handleOpenTab(
@@ -467,17 +481,17 @@ export default function App() {
       undefined,
       { explorerMode: "projects" }
     );
-  };
+  }, [handleOpenTab]);
 
-  const updateProjectNotification = (id: string, patch: Partial<ProjectMutationNotification>) => {
+  const updateProjectNotification = useCallback((id: string, patch: Partial<ProjectMutationNotification>) => {
     setProjectMutationNotifications((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
-  };
+  }, []);
 
-  const removeProjectNotification = (id: string) => {
+  const removeProjectNotification = useCallback((id: string) => {
     setProjectMutationNotifications((current) => current.filter((item) => item.id !== id));
-  };
+  }, []);
 
-  const runProjectMutation = async (label: string, execute: () => Promise<void>) => {
+  const runProjectMutation = useCallback(async (label: string, execute: () => Promise<void>) => {
     const id = crypto.randomUUID();
     setProjectMutationNotifications((current) => [
       ...current,
@@ -495,9 +509,9 @@ export default function App() {
         detail: error instanceof Error ? error.message : "Project update failed"
       });
     }
-  };
+  }, [updateProjectNotification, removeProjectNotification]);
 
-  const replaceRepoTopics = async (repoFullName: string, nextTopics: string[]) => {
+  const replaceRepoTopics = useCallback(async (repoFullName: string, nextTopics: string[]) => {
     const repo = repos.find((item) => item.full_name === repoFullName);
     if (!repo) {
       throw new Error(`Repository ${repoFullName} was not found.`);
@@ -515,10 +529,10 @@ export default function App() {
     await res.json() as { topics: string[] };
     await fetchRepos();
     await refreshSyncDiagnostics();
-  };
+  }, [repos, fetchRepos, refreshSyncDiagnostics]);
 
   // Metadata project tag assigning
-  const handleAddProjectTag = (tagName: string, repoFullName: string) => {
+  const handleAddProjectTag = useCallback((tagName: string, repoFullName: string) => {
     const repo = repos.find((item) => item.full_name === repoFullName);
     if (!repo) {
       throw new Error(`Repository ${repoFullName} was not found.`);
@@ -531,9 +545,9 @@ export default function App() {
     void runProjectMutation(`Add ${repoFullName} to ${topic}`, async () => {
       await replaceRepoTopics(repoFullName, [...repo.topics, topic].sort((left, right) => left.localeCompare(right)));
     });
-  };
+  }, [repos, runProjectMutation, replaceRepoTopics]);
 
-  const handleRemoveRepoFromTag = (tagId: string, repoFullName: string) => {
+  const handleRemoveRepoFromTag = useCallback((tagId: string, repoFullName: string) => {
     const tag = projectTagsRef.current.find((item) => item.id === tagId);
     if (!tag) {
       throw new Error(`Project ${tagId} was not found.`);
@@ -546,14 +560,14 @@ export default function App() {
     void runProjectMutation(`Remove ${repoFullName} from ${tag.name}`, async () => {
       await replaceRepoTopics(repoFullName, repo.topics.filter((topic) => topic !== tag.id));
     });
-  };
+  }, [repos, runProjectMutation, replaceRepoTopics]);
 
-  const handleCreateProjectWithRepo = (name: string, repoFullName: string) => {
+  const handleCreateProjectWithRepo = useCallback((name: string, repoFullName: string) => {
     const topic = normalizeProjectTopicName(name);
     handleAddProjectTag(topic, repoFullName);
-  };
+  }, [handleAddProjectTag]);
 
-  const handleDeleteProjectTag = (tagId: string) => {
+  const handleDeleteProjectTag = useCallback((tagId: string) => {
     const tag = projectTagsRef.current.find((item) => item.id === tagId);
     if (!tag) {
       throw new Error(`Project ${tagId} was not found.`);
@@ -572,41 +586,12 @@ export default function App() {
       await fetchRepos();
       await refreshSyncDiagnostics();
     });
-  };
+  }, [selectedProjectFilter, activeProjectDashboardId, runProjectMutation, fetchRepos, refreshSyncDiagnostics]);
 
-  // Update tabs callback to trigger reloading active items when comment adds
-  const handleRefreshActiveItem = async () => {
-    await fetchRepos();
-    await refreshSyncDiagnostics();
-
-    if (activeIssue) {
-      try {
-        const res = await fetch(`/api/github/repos/${activeIssue.owner}/${activeIssue.repo}/issues/${activeIssue.data.number}`);
-        if (!res.ok) {
-          // Keep active issue entry if the endpoint is temporarily unavailable.
-        } else {
-          const issue = await res.json() as Issue;
-          setActiveIssue({ ...activeIssue, data: issue });
-        }
-      } catch (err) {
-        console.error("Failed refreshing active issue", err);
-      }
-    }
-
-    if (activePR) {
-      try {
-        const res = await fetch(`/api/github/repos/${activePR.owner}/${activePR.repo}/prs/${activePR.data.number}`);
-        if (!res.ok) {
-          // Keep active PR entry if the endpoint is temporarily unavailable.
-        } else {
-          const pr = await res.json() as PullRequest;
-          setActivePR({ ...activePR, data: pr });
-        }
-      } catch (err) {
-        console.error("Failed refreshing active PR", err);
-      }
-    }
-  };
+  // Init fetch: config verify, repos list, projects metadata and sync logs
+  useEffect(() => {
+    void bootstrapWorkspace();
+  }, [bootstrapWorkspace]);
 
   const components = useMemo(() => {
     return {
@@ -637,17 +622,6 @@ export default function App() {
     event.api.onDidActivePanelChange((panel) => {
       if (panel) {
         setActiveTabId(panel.id);
-        if (panel.id.startsWith("issue-")) {
-          const params = panel.params as DockPanelParams | undefined;
-          if (params?.owner && params?.repoName && params?.data && "number" in params.data) {
-            setActiveIssue({ owner: params.owner, repo: params.repoName, data: params.data as Issue });
-          }
-        } else if (panel.id.startsWith("pr-")) {
-          const params = panel.params as DockPanelParams | undefined;
-          if (params?.owner && params?.repoName && params?.data) {
-            setActivePR({ owner: params.owner, repo: params.repoName, data: params.data as PullRequest });
-          }
-        }
       }
     });
   };
@@ -689,6 +663,16 @@ export default function App() {
     selectedProjectFilter,
     activeRepoFullName,
     activeProjectDashboardId,
+    handleOpenRepo,
+    handleOpenProject,
+    handleOpenRepositoryExplorer,
+    handleOpenProjectsDashboard,
+    handleGlobalSync,
+    handleAddProjectTag,
+    handleCreateProjectWithRepo,
+    handleRemoveRepoFromTag,
+    handleDeleteProjectTag,
+    handleOpenTab,
   ]);
 
   return (
@@ -753,7 +737,6 @@ export default function App() {
               repos={repos}
               projectTags={projectTags}
               syncTimestamps={syncTimestamps}
-              isSyncing={isSyncing}
               onSelectIssue={(owner, repo, data) => handleOpenTab(`issue-${owner}-${repo}-${data.number}`, "issue", `#${data.number}: ${data.title}`, owner, repo, data.number)}
               onSelectPR={(owner, repo, data) => handleOpenTab(`pr-${owner}-${repo}-${data.number}`, "pr", `PR #${data.number}: ${data.title}`, owner, repo, data.number)}
               onAddProjectTag={handleAddProjectTag}
@@ -769,7 +752,6 @@ export default function App() {
               onClose={() => setSidebarOpen(false)}
               selectedProjectFilter={selectedProjectFilter}
               activeProjectDashboardId={activeProjectDashboardId}
-              onSelectProjectFilter={setSelectedProjectFilter}
             />
           </div>
         )}
@@ -787,7 +769,6 @@ export default function App() {
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
         projectTags={projectTags}
-        repos={repos}
         onToggleSidebar={() => setSidebarOpen(prev => !prev)}
         onToggleExplorer={() => handleOpenTab("explorer", "welcome", "Repository Explorer")}
         onSelectProjectFilter={setSelectedProjectFilter}

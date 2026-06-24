@@ -2,4 +2,5 @@ export function invariant(condition: unknown, message: string): asserts conditio
   if (!condition) {
     throw new Error(message);
   }
+  return void 0;
 }

@@ -63,10 +63,17 @@ export interface CIRun {
   logs?: string;
 }
 
+// Per-class security telemetry. `configured: false` means the repo has that scanning
+// feature turned off (GitHub answered 403/404); it is distinct from a configured class
+// reporting zero open alerts.
+export type SecurityClassState =
+  | { configured: true; open: number }
+  | { configured: false };
+
 export interface SecurityAlerts {
-  dependabotOpen: number;
-  codeScanningOpen: number;
-  secretScanningOpen: number;
+  dependabot: SecurityClassState;
+  codeScanning: SecurityClassState;
+  secretScanning: SecurityClassState;
   totalOpen: number;
 }
 

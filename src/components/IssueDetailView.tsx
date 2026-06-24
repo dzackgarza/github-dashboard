@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   MessageSquare,
   Sparkles,
@@ -34,47 +34,56 @@ export default function IssueDetailView({
   // Local comments state
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [newCommentBody, setNewCommentBody] = useState("");
   const [postingComment, setPostingComment] = useState(false);
+  const [postCommentError, setPostCommentError] = useState<string | null>(null);
 
-  // Sync state if issue receives updates
-  useEffect(() => {
-    fetchComments();
-  }, [issue.number, fullName]);
-
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     setLoadingComments(true);
+    setCommentsError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${issue.number}/comments`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setComments(data);
+      if (!res.ok) {
+        throw new Error(`Comments endpoint failed with ${res.status}`);
       }
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Comments response was not an array.");
+      }
+      setComments(data);
     } catch (err) {
-      console.error("Failed loading comments list", err);
+      setCommentsError(`Failed to load comments: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingComments(false);
     }
-  };
+  }, [owner, repoName, issue.number]);
+
+  // Sync state if issue receives updates
+  useEffect(() => {
+    void fetchComments();
+  }, [fetchComments]);
 
   const handlePostComment = async () => {
     if (!newCommentBody.trim()) return;
     setPostingComment(true);
+    setPostCommentError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${issue.number}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: newCommentBody })
       });
-      if (res.ok) {
-        const posted = await res.json();
-        setComments((prev) => [...prev, posted]);
-        setNewCommentBody("");
-        // Notify sidebar/upper layers of actions
-        onRefreshItem();
+      if (!res.ok) {
+        throw new Error(`Comment post failed with ${res.status}`);
       }
+      const posted = await res.json();
+      setComments((prev) => [...prev, posted]);
+      setNewCommentBody("");
+      // Notify sidebar/upper layers of actions
+      onRefreshItem();
     } catch (err) {
-      console.error("Failed writing comment", err);
+      setPostCommentError(`Failed to post comment: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setPostingComment(false);
     }
@@ -203,6 +212,11 @@ export default function IssueDetailView({
           </div>
 
           {/* Timeline Comments Stream */}
+          {commentsError && (
+            <div className="mb-4 text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+              {commentsError}
+            </div>
+          )}
           {loadingComments ? (
             <div className="flex flex-col items-center justify-center py-10 gap-2.5">
               <Loader2 className="animate-spin text-[#007acc]" size={24} />
@@ -246,6 +260,11 @@ export default function IssueDetailView({
           {/* New comment textbox */}
           <div className="border border-[#3e3e3e] rounded bg-[#252526] p-4 space-y-3 shadow-md mt-6">
             <h3 className="text-xs font-mono font-semibold text-white uppercase tracking-wider select-none">Add Feedback Conversation</h3>
+            {postCommentError && (
+              <div className="text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+                {postCommentError}
+              </div>
+            )}
             <textarea
               rows={4}
               placeholder="Write a markdown comment... (Press Comment to post real-time sync)"

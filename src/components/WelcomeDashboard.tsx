@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Activity,
   FolderGit2,
@@ -6,7 +6,6 @@ import {
   GitPullRequest,
   RefreshCw,
   Clock,
-  CircleDot,
   Search,
   ChevronRight,
   Tag,
@@ -207,11 +206,6 @@ export default function WelcomeDashboard() {
       isMounted = false;
     };
   }, [repos, githubUser?.login]);
-
-  // Compute profile aggregations
-  const totalStars = useMemo(() => {
-    return repos.reduce((sum, r) => sum + (r.stargazers_count || 0), 0);
-  }, [repos]);
 
   const inboxLabels = useMemo(() => {
     const labelsByName = new Map<string, Label>();

@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type APIResponse, type Locator, type Page } from "@playwright/test";
 import assert from "node:assert/strict";
 import { normalizeProjectTopicName } from "../../src/utils/projectTopics";
 
@@ -144,12 +144,16 @@ interface GitHubRepoTruth {
   archived: boolean;
 }
 
+type SecurityClassState =
+  | { configured: true; open: number }
+  | { configured: false };
+
 interface PRDetailsResponse {
   ci_status?: {
     security_alerts?: {
-      dependabotOpen: number;
-      codeScanningOpen: number;
-      secretScanningOpen: number;
+      dependabot: SecurityClassState;
+      codeScanning: SecurityClassState;
+      secretScanning: SecurityClassState;
       totalOpen: number;
     };
     runs?: unknown[];
@@ -191,6 +195,12 @@ function githubApiHeaders(): Record<string, string> {
   };
 }
 
+// Asserts a live GitHub API response succeeded, surfacing the failing status. Centralizing
+// the ok-check keeps multi-step fixture setup helpers free of per-call branch noise.
+function assertResponseOk(response: APIResponse, message: string): void {
+  assert(response.ok(), `${message}: HTTP ${response.status()}`);
+}
+
 function isIssueListPath(pathname: string): boolean {
   return /^\/api\/github\/repos\/[^/]+\/[^/]+\/issues(?:\?.*)?$/.test(pathname);
 }
@@ -205,6 +215,27 @@ function isPullListPath(pathname: string): boolean {
 
 function isPullSinglePath(pathname: string): boolean {
   return /^\/api\/github\/repos\/[^/]+\/[^/]+\/prs\/\d+$/.test(pathname);
+}
+
+function isIssueCommentsPath(pathname: string): boolean {
+  return pathname.endsWith("/comments") || /\/issues\/\d+\/comments$/.test(pathname);
+}
+
+type ApiCallCounter = "issueSingle" | "issueList" | "issueComments" | "prSingle" | "prList";
+
+// Ordered classifiers mapping an intercepted API path to the counter it increments. The
+// order matters: single-item paths are checked before list paths. Returns undefined for
+// passthrough paths (e.g. /files, /details) that are not counted.
+const API_CALL_CLASSIFIERS: { matches: (pathname: string) => boolean; counter: ApiCallCounter }[] = [
+  { matches: isIssueSinglePath, counter: "issueSingle" },
+  { matches: isIssueListPath, counter: "issueList" },
+  { matches: isIssueCommentsPath, counter: "issueComments" },
+  { matches: isPullSinglePath, counter: "prSingle" },
+  { matches: isPullListPath, counter: "prList" }
+];
+
+function classifyApiCallPath(pathname: string): ApiCallCounter | undefined {
+  return API_CALL_CLASSIFIERS.find(({ matches }) => matches(pathname))?.counter;
 }
 
 test("repos endpoint exposes latest branch-head commit activity and sorts newest first", async ({ request }) => {
@@ -633,6 +664,38 @@ async function discoverOpenPullRequest(request: APIRequestContext): Promise<Open
   return null;
 }
 
+function hasUnconfiguredSecurityClass(payload: PRDetailsResponse): boolean {
+  const alerts = payload.ci_status?.security_alerts;
+  if (!alerts) {
+    return false;
+  }
+  return [alerts.dependabot, alerts.codeScanning, alerts.secretScanning].some((state) => !state.configured);
+}
+
+// Finds an open PR whose details endpoint reports at least one security scanner that the
+// repository has not configured (GitHub answered 403/404). Used to prove the dashboard
+// surfaces the not-enabled state instead of conflating it with zero alerts.
+async function discoverPullRequestWithUnconfiguredScanner(request: APIRequestContext): Promise<OpenPRSelection | null> {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  for (const repo of reposPayload.repos) {
+    const [owner, name] = repo.full_name.split("/");
+    const prsPayload = await (await request.get(`/api/github/repos/${owner}/${name}/prs`)).json() as ApiPullRequest[] | { error: string };
+    if (!Array.isArray(prsPayload) || prsPayload.length === 0) {
+      continue;
+    }
+    const pr = prsPayload[0];
+    const detailsResponse = await request.get(`/api/github/repos/${owner}/${name}/prs/${pr.number}/details`);
+    if (!detailsResponse.ok()) {
+      continue;
+    }
+    const detailsPayload = await detailsResponse.json() as PRDetailsResponse;
+    if (hasUnconfiguredSecurityClass(detailsPayload)) {
+      return { owner, name, fullName: repo.full_name, number: pr.number, title: pr.title, body: pr.body || "" };
+    }
+  }
+  return null;
+}
+
 async function discoverOpenIssue(request: APIRequestContext): Promise<OpenItemSelection | null> {
   const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
   for (const repo of reposPayload.repos) {
@@ -652,122 +715,142 @@ async function discoverOpenIssue(request: APIRequestContext): Promise<OpenItemSe
   return null;
 }
 
+function isIssueUserLike(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const user = value as Record<string, unknown>;
+  return typeof user.login === "string" && typeof user.avatar_url === "string";
+}
+
+function isIssueLabelLike(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const label = value as Record<string, unknown>;
+  return typeof label.name === "string" && typeof label.color === "string";
+}
+
+const ISSUE_SCALAR_TYPES: Record<string, "string" | "number"> = {
+  number: "number",
+  title: "string",
+  created_at: "string",
+  updated_at: "string",
+  comments: "number"
+};
+
+function hasIssueScalarFields(item: Record<string, unknown>): boolean {
+  const typedScalarsValid = Object.entries(ISSUE_SCALAR_TYPES).every(
+    ([field, expectedType]) => typeof item[field] === expectedType
+  );
+  const stateIsValid = item.state === "open" || item.state === "closed";
+  const bodyIsValid = typeof item.body === "string" || item.body === null;
+  return typedScalarsValid && stateIsValid && bodyIsValid;
+}
+
 function isApiIssueLike(value: unknown): value is ApiIssueLike {
   if (!value || typeof value !== "object") {
     return false;
   }
 
   const item = value as Record<string, unknown>;
-  if (
-    typeof item.number !== "number" ||
-    typeof item.title !== "string" ||
-    item.state !== "open" &&
-    item.state !== "closed" ||
-    typeof item.created_at !== "string" ||
-    typeof item.updated_at !== "string" ||
-    !item.user ||
-    typeof item.user !== "object" ||
-    typeof (item.user as Record<string, unknown>).login !== "string" ||
-    typeof (item.user as Record<string, unknown>).avatar_url !== "string"
-  ) {
+  if (!hasIssueScalarFields(item) || !isIssueUserLike(item.user)) {
     return false;
   }
 
-  if (typeof item.comments !== "number" || !Array.isArray(item.labels) ||
-    !((typeof item.body === "string" || item.body === null))
-  ) {
+  if (!Array.isArray(item.labels)) {
     return false;
   }
 
-  return item.labels.every((label) =>
-    label && typeof label === "object" &&
-    typeof (label as Record<string, unknown>).name === "string" &&
-    typeof (label as Record<string, unknown>).color === "string"
-  );
+  return item.labels.every(isIssueLabelLike);
 }
 
 function normalizedRepoTestId(fullName: string): string {
   return fullName.replace(/\//g, "-");
 }
 
-async function discoverLabeledIssue(request: APIRequestContext): Promise<LabeledItemSelection> {
-  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
-  let unlabeledIssue: OpenItemSelection | null = null;
+// Opens a PR's detail panel through the Repos sidebar: expand the repo, open its PRs
+// subfolder, and click the PR row. Shared by the PR-detail tests so each test body stays
+// focused on its own assertions.
+async function openPullRequestPanel(page: Page, pr: OpenPRSelection): Promise<void> {
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+  const normalizedRepo = normalizedRepoTestId(pr.fullName);
+  const repoRow = page.getByTestId(`sidebar-repo-${normalizedRepo}`);
+  await expect(repoRow).toBeVisible();
+  await repoRow.click({ position: { x: 8, y: 8 } });
+
+  const prSubfolderRow = page.getByTestId(`sidebar-subfolder-${normalizedRepo}-prs`);
+  await prSubfolderRow.scrollIntoViewIfNeeded();
+  await expect(prSubfolderRow).toBeVisible();
+  await prSubfolderRow.click();
+
+  const prRow = page.getByTestId(`sidebar-pr-${normalizedRepo}-${pr.number}`);
+  await expect(prRow).toBeVisible({ timeout: 45_000 });
+  await prRow.click();
+}
+
+function itemSelectionFrom(repo: Repo, item: ApiIssueLike): OpenItemSelection {
+  const [owner, name] = repo.full_name.split("/");
+  return {
+    owner,
+    name,
+    fullName: repo.full_name,
+    number: item.number,
+    title: item.title,
+    body: item.body || ""
+  };
+}
+
+// Scans the workspace repos for a labeled item (issue or PR, per `fetchPath`). Returns the
+// labeled selection when found, otherwise records the first unlabeled item so callers can
+// apply a temporary label as a fallback fixture.
+async function findLabeledOrUnlabeledItem(
+  request: APIRequestContext,
+  reposPayload: ReposResponse,
+  fetchPath: (owner: string, name: string) => string
+): Promise<{ labeled: LabeledItemSelection } | { unlabeled: OpenItemSelection | null }> {
+  let unlabeled: OpenItemSelection | null = null;
   for (const repo of reposPayload.repos) {
     const [owner, name] = repo.full_name.split("/");
-    const issuesPayload = await (await request.get(`/api/github/repos/${owner}/${name}/issues`)).json() as
-      ApiIssueLike[] | { error: string };
-    if (Array.isArray(issuesPayload)) {
-      const issue = issuesPayload.find((candidate) => candidate.labels.length > 0 && isApiIssueLike(candidate));
-      if (issue) {
-        return {
-          owner,
-          name,
-          fullName: repo.full_name,
-          number: issue.number,
-          title: issue.title,
-          body: issue.body || "",
-          label: issue.labels[0].name,
-          cleanup: { kind: "none" }
-        };
-      }
-      const unlabeled = issuesPayload.find((candidate) => candidate.labels.length === 0 && isApiIssueLike(candidate));
-      if (!unlabeledIssue && unlabeled) {
-        unlabeledIssue = {
-          owner,
-          name,
-          fullName: repo.full_name,
-          number: unlabeled.number,
-          title: unlabeled.title,
-          body: unlabeled.body || ""
-        };
-      }
+    const payload = await (await request.get(fetchPath(owner, name))).json() as ApiIssueLike[] | { error: string };
+    if (!Array.isArray(payload)) {
+      continue;
+    }
+    const labeledItem = payload.find((candidate) => candidate.labels.length > 0 && isApiIssueLike(candidate));
+    if (labeledItem) {
+      return { labeled: { ...itemSelectionFrom(repo, labeledItem), label: labeledItem.labels[0].name, cleanup: { kind: "none" } } };
+    }
+    const unlabeledItem = payload.find((candidate) => candidate.labels.length === 0 && isApiIssueLike(candidate));
+    if (!unlabeled && unlabeledItem) {
+      unlabeled = itemSelectionFrom(repo, unlabeledItem);
     }
   }
-  if (unlabeledIssue) {
-    const label = await createAndApplyTemporaryLabel(request, unlabeledIssue);
-    return { ...unlabeledIssue, label, cleanup: { kind: "temporary-label" } };
+  return { unlabeled };
+}
+
+async function discoverLabeledIssue(request: APIRequestContext): Promise<LabeledItemSelection> {
+  const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
+  const found = await findLabeledOrUnlabeledItem(request, reposPayload, (owner, name) => `/api/github/repos/${owner}/${name}/issues`);
+  if ("labeled" in found) {
+    return found.labeled;
+  }
+  if (found.unlabeled) {
+    const label = await createAndApplyTemporaryLabel(request, found.unlabeled);
+    return { ...found.unlabeled, label, cleanup: { kind: "temporary-label" } };
   }
   throw new Error("No live issue fixture was available for label-filter proof.");
 }
 
 async function discoverLabeledPullRequest(request: APIRequestContext): Promise<LabeledItemSelection> {
   const reposPayload = await (await request.get("/api/github/repos")).json() as ReposResponse;
-  let unlabeledPullRequest: OpenItemSelection | null = null;
-  for (const repo of reposPayload.repos) {
-    const [owner, name] = repo.full_name.split("/");
-    const prsPayload = await (await request.get(`/api/github/repos/${owner}/${name}/prs`)).json() as
-      ApiPullRequest[] | { error: string };
-    if (Array.isArray(prsPayload)) {
-      const pr = prsPayload.find((candidate) => candidate.labels.length > 0 && isApiIssueLike(candidate));
-      if (pr) {
-        return {
-          owner,
-          name,
-          fullName: repo.full_name,
-          number: pr.number,
-          title: pr.title,
-          body: pr.body || "",
-          label: pr.labels[0].name,
-          cleanup: { kind: "none" }
-        };
-      }
-      const unlabeled = prsPayload.find((candidate) => candidate.labels.length === 0 && isApiIssueLike(candidate));
-      if (!unlabeledPullRequest && unlabeled) {
-        unlabeledPullRequest = {
-          owner,
-          name,
-          fullName: repo.full_name,
-          number: unlabeled.number,
-          title: unlabeled.title,
-          body: unlabeled.body || ""
-        };
-      }
-    }
+  const found = await findLabeledOrUnlabeledItem(request, reposPayload, (owner, name) => `/api/github/repos/${owner}/${name}/prs`);
+  if ("labeled" in found) {
+    return found.labeled;
   }
-  if (unlabeledPullRequest) {
-    const label = await createAndApplyTemporaryLabel(request, unlabeledPullRequest);
-    return { ...unlabeledPullRequest, label, cleanup: { kind: "temporary-label" } };
+  if (found.unlabeled) {
+    const label = await createAndApplyTemporaryLabel(request, found.unlabeled);
+    return { ...found.unlabeled, label, cleanup: { kind: "temporary-label" } };
   }
 
   const repoForTemporaryPullRequest = reposPayload.repos[0];
@@ -815,18 +898,14 @@ async function createTemporaryPullRequest(request: APIRequestContext, repo: Repo
   const [owner, name] = repo.full_name.split("/");
   const headers = githubApiHeaders();
   const repoResponse = await request.get(`https://api.github.com/repos/${owner}/${name}`, { headers });
-  if (!repoResponse.ok()) {
-    throw new Error(`Unable to read repository ${repo.full_name} for temporary PR setup: HTTP ${repoResponse.status()}`);
-  }
+  assertResponseOk(repoResponse, `Unable to read repository ${repo.full_name} for temporary PR setup`);
   const repoDetails = await repoResponse.json() as GitHubRepoDetails;
   assert(typeof repoDetails.default_branch === "string" && repoDetails.default_branch.length > 0, `${repo.full_name} must expose a default branch.`);
 
   const branchName = normalizeProjectTopicName(`e2e-label-pr-${Date.now()}`);
   const encodedBaseBranch = repoDetails.default_branch.split("/").map(encodeURIComponent).join("/");
   const baseRefResponse = await request.get(`https://api.github.com/repos/${owner}/${name}/git/ref/heads/${encodedBaseBranch}`, { headers });
-  if (!baseRefResponse.ok()) {
-    throw new Error(`Unable to read base branch ${repoDetails.default_branch} for ${repo.full_name}: HTTP ${baseRefResponse.status()}`);
-  }
+  assertResponseOk(baseRefResponse, `Unable to read base branch ${repoDetails.default_branch} for ${repo.full_name}`);
   const baseRef = await baseRefResponse.json() as GitHubRefResponse;
   assert(typeof baseRef.object?.sha === "string" && baseRef.object.sha.length > 0, `${repo.full_name} base ref must expose an object SHA.`);
 
@@ -837,9 +916,7 @@ async function createTemporaryPullRequest(request: APIRequestContext, repo: Repo
       sha: baseRef.object.sha
     }
   });
-  if (!createRefResponse.ok()) {
-    throw new Error(`Unable to create temporary branch ${branchName} on ${repo.full_name}: HTTP ${createRefResponse.status()}`);
-  }
+  assertResponseOk(createRefResponse, `Unable to create temporary branch ${branchName} on ${repo.full_name}`);
 
   const filePath = `.github-dashboard-e2e-${branchName}.md`;
   const contentResponse = await request.put(`https://api.github.com/repos/${owner}/${name}/contents/${filePath}`, {
@@ -850,9 +927,7 @@ async function createTemporaryPullRequest(request: APIRequestContext, repo: Repo
       branch: branchName
     }
   });
-  if (!contentResponse.ok()) {
-    throw new Error(`Unable to create temporary PR file on ${branchName} in ${repo.full_name}: HTTP ${contentResponse.status()}`);
-  }
+  assertResponseOk(contentResponse, `Unable to create temporary PR file on ${branchName} in ${repo.full_name}`);
 
   const title = `Dashboard label filter fixture ${branchName}`;
   const pullResponse = await request.post(`https://api.github.com/repos/${owner}/${name}/pulls`, {
@@ -864,9 +939,7 @@ async function createTemporaryPullRequest(request: APIRequestContext, repo: Repo
       body: "Temporary PR fixture for dashboard label filtering."
     }
   });
-  if (!pullResponse.ok()) {
-    throw new Error(`Unable to create temporary PR from ${branchName} in ${repo.full_name}: HTTP ${pullResponse.status()}`);
-  }
+  assertResponseOk(pullResponse, `Unable to create temporary PR from ${branchName} in ${repo.full_name}`);
   const pullRequest = await pullResponse.json() as GitHubPullRequestResponse;
   assert(Number.isInteger(pullRequest.number), `${repo.full_name} temporary PR response must expose a number.`);
 
@@ -1027,7 +1100,7 @@ test("reopened Inbox renders cached items while live refresh is active", async (
         repoName: name,
         repoFullName: repo.full_name,
         body: pr.body || "",
-        comments: pr.comments as number,
+        comments: pr.comments,
         labels: pr.labels.map((label) => ({ name: label.name, color: label.color })),
         type: "pr",
         compositeId: `pr-${repo.full_name}-${pr.number}`
@@ -1079,21 +1152,7 @@ test("real PR detail layout can be resized without obscuring security sidebar", 
     throw new Error("No open pull request fixture found for live PR layout e2e proof.");
   }
 
-  await page.getByRole("button", { name: /^Repos \d+/ }).click();
-
-  const normalizedRepo = selectedPR.fullName.replace(/\//g, "-");
-  const repoRow = page.getByTestId(`sidebar-repo-${normalizedRepo}`);
-  await expect(repoRow).toBeVisible();
-  await repoRow.click({ position: { x: 8, y: 8 } });
-
-  const prSubfolderRow = page.getByTestId(`sidebar-subfolder-${normalizedRepo}-prs`);
-  await prSubfolderRow.scrollIntoViewIfNeeded();
-  await expect(prSubfolderRow).toBeVisible();
-  await prSubfolderRow.click();
-
-  const prRow = page.getByTestId(`sidebar-pr-${normalizedRepo}-${selectedPR.number}`);
-  await expect(prRow).toBeVisible({ timeout: 45_000 });
-  await prRow.click();
+  await openPullRequestPanel(page, selectedPR);
 
   const leftPanel = page.getByTestId("pr-detail-main-panel");
   const rightPanel = page.getByTestId("pr-detail-sidebar");
@@ -1131,7 +1190,9 @@ test("real PR detail layout can be resized without obscuring security sidebar", 
 
   await expect(rightPanel.getByText("Security Alerts", { exact: true })).toBeVisible();
   await expect(rightPanel.getByText(/CI Check suites/i)).toBeVisible();
-  await expect(rightPanel.getByText(/No GitHub security alerts reported|\d+ security alerts/)).toBeVisible();
+  await expect(
+    rightPanel.getByText(/No GitHub security alerts reported|\d+ security alerts|Not enabled/).first()
+  ).toBeVisible();
 });
 
 test("PR details endpoint fails loudly when security telemetry is unavailable", async ({ request }) => {
@@ -1150,6 +1211,35 @@ test("PR details endpoint fails loudly when security telemetry is unavailable", 
   expect(detailsPayload.ci_status).toBeTruthy();
   expect(detailsPayload.ci_status?.security_alerts).toBeDefined();
   expect(detailsPayload.ci_status?.security_alerts?.totalOpen).toBeGreaterThanOrEqual(0);
+});
+
+test("PR detail surfaces a not-enabled signal for repositories with security scanning unconfigured", async ({ page, request }) => {
+  const selectedPR = await discoverPullRequestWithUnconfiguredScanner(request);
+  if (!selectedPR) {
+    throw new Error("No open PR found whose repository reports an unconfigured security scanner (403/404) for the not-enabled e2e proof.");
+  }
+
+  // The server must distinguish "feature not configured" from "zero alerts": at least one
+  // class is configured:false, and totalOpen sums only configured classes.
+  const detailsResponse = await request.get(`/api/github/repos/${selectedPR.owner}/${selectedPR.name}/prs/${selectedPR.number}/details`);
+  expect(detailsResponse.ok()).toBeTruthy();
+  const detailsPayload = await detailsResponse.json() as PRDetailsResponse;
+  const alerts = detailsPayload.ci_status?.security_alerts;
+  expect(alerts).toBeDefined();
+  expect(hasUnconfiguredSecurityClass(detailsPayload)).toBe(true);
+  expect(alerts?.totalOpen).toBeGreaterThanOrEqual(0);
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openPullRequestPanel(page, selectedPR);
+
+  // The detail layout still renders (the 403/404 is not a hard failure). The details
+  // endpoint for a repo with unconfigured scanners still performs the full upstream fan-out
+  // (check suites + review threads), so allow extra time for the panel to settle.
+  await expect(page.getByTestId("pr-detail-main-panel")).toBeVisible({ timeout: 45_000 });
+  const rightPanel = page.getByTestId("pr-detail-sidebar");
+  await expect(rightPanel).toBeVisible();
+  // ... and the unconfigured scanner is surfaced distinctly, not shown as a 0 count.
+  await expect(rightPanel.getByText("Not enabled").first()).toBeVisible();
 });
 
 test("issue and PR detail views load summary from single-item endpoints", async ({ page, request }) => {
@@ -1173,20 +1263,10 @@ test("issue and PR detail views load summary from single-item endpoints", async 
 
   await page.route(/\/api\/github\/repos\/[^/]+\/[^/]+\/(issues|prs).*/, async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (isIssueSinglePath(pathname)) {
-      calls.issueSingle += 1;
-    } else if (isIssueListPath(pathname)) {
-      calls.issueList += 1;
-    } else if (pathname.endsWith("/comments") || /\/issues\/\d+\/comments$/.test(pathname)) {
-      calls.issueComments += 1;
-    } else if (isPullSinglePath(pathname)) {
-      calls.prSingle += 1;
-    } else if (isPullListPath(pathname)) {
-      calls.prList += 1;
-    } else if (pathname.endsWith("/files") || /\/prs\/\d+\/details$/.test(pathname)) {
-      // passthrough for additional PR detail requests.
+    const counter = classifyApiCallPath(pathname);
+    if (counter) {
+      calls[counter] += 1;
     }
-
     await route.continue();
   });
 
@@ -1259,6 +1339,68 @@ test("single-item endpoints fail loudly when resource shape or id is wrong", asy
 
   const missingPrRes = await request.get(`/api/github/repos/${selectedIssue.owner}/${selectedIssue.name}/prs/0`);
   expect(missingPrRes.ok()).toBeFalsy();
+});
+
+test("issue detail panel surfaces a distinguishable error when the single-item load fails", async ({ page, request }) => {
+  const selectedIssue = await discoverOpenIssue(request);
+  if (!selectedIssue) {
+    throw new Error("No open issue fixture found for issue-detail failure-surfacing e2e proof.");
+  }
+
+  // Force the single-issue endpoint to fail so the detail panel must distinguish a load
+  // failure from an empty/no-data state. The list endpoint stays live so the issue row
+  // renders and can be opened.
+  await page.route(/\/api\/github\/repos\/[^/]+\/[^/]+\/issues\/\d+$/, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Injected single-issue failure for distinguishable-error proof." })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+  const issueRepo = selectedIssue.fullName.replace(/\//g, "-");
+  const issueRepoRow = page.getByTestId(`sidebar-repo-${issueRepo}`);
+  await expect(issueRepoRow).toBeVisible();
+  await issueRepoRow.click({ position: { x: 8, y: 8 } });
+
+  await page.getByTestId(`sidebar-subfolder-${issueRepo}-issues`).click();
+
+  const issueRow = page.getByTestId(`sidebar-issue-${issueRepo}-${selectedIssue.number}`);
+  await expect(issueRow).toBeVisible();
+  await issueRow.first().click();
+
+  // A distinguishable failure names the specific item that failed to load (issue #N),
+  // which the conflated null-state placeholder does not do.
+  const failureNotice = page.getByText(`Failed to load issue #${selectedIssue.number}`);
+  await expect(failureNotice).toBeVisible();
+  // Tailwind v4 emits the red-400 error color in the oklch color space.
+  await expect(failureNotice).toHaveCSS("color", "oklch(0.704 0.191 22.216)");
+});
+
+test("PR detail panel surfaces a distinguishable error when the single-item load fails", async ({ page, request }) => {
+  const selectedPR = await discoverOpenPullRequest(request);
+  if (!selectedPR) {
+    throw new Error("No open pull request fixture found for PR-detail failure-surfacing e2e proof.");
+  }
+
+  await page.route(/\/api\/github\/repos\/[^/]+\/[^/]+\/prs\/\d+$/, async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "Injected single-PR failure for distinguishable-error proof." })
+    });
+  });
+
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await openPullRequestPanel(page, selectedPR);
+
+  const failureNotice = page.getByText(`Failed to load pull request #${selectedPR.number}`);
+  await expect(failureNotice).toBeVisible();
+  // Tailwind v4 emits the red-400 error color in the oklch color space.
+  await expect(failureNotice).toHaveCSS("color", "oklch(0.704 0.191 22.216)");
 });
 
 test("rapid repo project assignments settle to server-canonical project state", async ({ page, request }) => {
