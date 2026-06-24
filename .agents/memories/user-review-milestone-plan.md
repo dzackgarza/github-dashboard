@@ -12,29 +12,17 @@ Land a coherent local dashboard milestone that the user can review in the real b
 
 ## Current Evidence (corrected 2026-06-21)
 
-The original snapshot below contained a false root-cause claim. It is corrected here;
-the misdiagnosis is preserved as a record, not deleted.
+The original snapshot below contained a false root-cause claim.
+It is corrected here; the misdiagnosis is preserved as a record, not deleted.
 
 - `main` is clean and ahead of `origin/main`.
-- **Correction to the original NODE_ENV claim.** `direnv exec .` does NOT set
-  `NODE_ENV` (verified: `direnv exec . printenv NODE_ENV` exits unset, and the npm
-  script context reports `NODE_ENV=undefined`). With `NODE_ENV` unset, `server.ts`
-  took the Vite-middleware branch, so `just dev` and Playwright already served current
-  Vite source. The stale `dist/assets/index-lvwRXLKg.js` UI was served by a *leftover
-  review server* that had been started in a shell where `NODE_ENV=production` happened
-  to be set — not by direnv. Run cleanly against current source, all 19 e2e tests pass;
-  the reported "dashboard consolidation failures" were the stale-bundle artifact.
-- The real defect behind that confusion was the `NODE_ENV` runtime branch in `server.ts`
-  itself — a runtime mode switch that silently serves stale `dist/` if any ambient
-  `NODE_ENV` leaks in. It has been removed (the dev server now has one behavior: Express
-  API plus Vite middleware).
-- `src/components/RepositoryExplorer.tsx` previously had a hand-rolled repository
-  right-click menu; it now renders the canonical `RepoCard` in the explorer popup, and
-  the old menu markup is deleted.
-- Current source contains the completed slop-remediation changes: strict TypeScript,
-  unit tests in `just test`, live security-alert fetching, single-item issue/PR
-  endpoints, shared markdown excerpt parsing, shared invariant utility, and shared
-  project color/topic utilities (see `slop-audit-remediation-plan.md`).
+- **Correction to the original NODE_ENV claim.** `direnv exec .` does NOT set `NODE_ENV` (verified: `direnv exec . printenv NODE_ENV` exits unset, and the npm script context reports `NODE_ENV=undefined`). With `NODE_ENV` unset, `server.ts` took the Vite-middleware branch, so `just dev` and Playwright already served current Vite source.
+  The stale `dist/assets/index-lvwRXLKg.js` UI was served by a *leftover review server* that had been started in a shell where `NODE_ENV=production` happened to be set — not by direnv.
+  Run cleanly against current source, all 19 e2e tests pass; the reported "dashboard consolidation failures" were the stale-bundle artifact.
+- The real defect behind that confusion was the `NODE_ENV` runtime branch in `server.ts` itself — a runtime mode switch that silently serves stale `dist/` if any ambient `NODE_ENV` leaks in.
+  It has been removed (the dev server now has one behavior: Express API plus Vite middleware).
+- `src/components/RepositoryExplorer.tsx` previously had a hand-rolled repository right-click menu; it now renders the canonical `RepoCard` in the explorer popup, and the old menu markup is deleted.
+- Current source contains the completed slop-remediation changes: strict TypeScript, unit tests in `just test`, live security-alert fetching, single-item issue/PR endpoints, shared markdown excerpt parsing, shared invariant utility, and shared project color/topic utilities (see `slop-audit-remediation-plan.md`).
 
 ## Milestone Acceptance
 
@@ -111,25 +99,15 @@ Objective: provide a reviewable milestone, not a report-shaped substitute.
 
 ## Outcome (2026-06-21)
 
-- Codex's "first required work" (the direnv/`NODE_ENV` runtime boundary) was a
-  misdiagnosis; see the corrected Current Evidence. The dev/test server already served
-  current source under the real `direnv exec .` environment.
+- Codex's "first required work" (the direnv/`NODE_ENV` runtime boundary) was a misdiagnosis; see the corrected Current Evidence.
+  The dev/test server already served current source under the real `direnv exec .` environment.
 - Landed:
-  - `07e856f` — stabilized the single-item-endpoint e2e against a pre-existing,
-    data-dependent flake (an open issue and open PR resolving to the same repository
-    collapsed the sidebar tree on the second toggle). This was the only baseline red;
-    not a card or consolidation defect.
-  - `182620e` — replaced the explorer right-click hand-rolled menu with the canonical
-    `RepoCard` (R1), clamped into the viewport, with new e2e coverage. Full gate green
-    (lint + vitest + 19 Playwright e2e).
-  - This commit also removes the `server.ts` `NODE_ENV` runtime branch: the dev server
-    now serves Vite source unconditionally, and the dead production-static path
-    (`STATIC_DIST_DIR`, `npm start`, esbuild server bundling) is deleted. Verified
-    `just dev` serves `/src/main.tsx` and `/@vite/client` (live Vite source).
+  - `07e856f` — stabilized the single-item-endpoint e2e against a pre-existing, data-dependent flake (an open issue and open PR resolving to the same repository collapsed the sidebar tree on the second toggle).
+    This was the only baseline red; not a card or consolidation defect.
+  - `182620e` — replaced the explorer right-click hand-rolled menu with the canonical `RepoCard` (R1), clamped into the viewport, with new e2e coverage.
+    Full gate green (lint + vitest + 19 Playwright e2e).
+  - This commit also removes the `server.ts` `NODE_ENV` runtime branch: the dev server now serves Vite source unconditionally, and the dead production-static path (`STATIC_DIST_DIR`, `npm start`, esbuild server bundling) is deleted.
+    Verified `just dev` serves `/src/main.tsx` and `/@vite/client` (live Vite source).
 - Sidebar context menus are unchanged (still tree/action menus), per requirement.
-- Card uniformization Phases 2 (new-tab) and 3 (project-card single-source) were already
-  satisfied (no code change), verified; see `repo-card-uniformization-plan.md`. The
-  slop-audit findings are all remediated; see `slop-audit-remediation-plan.md`.
-- Review server: started after this commit via `just dev` on port 3002. The pre-commit
-  hook runs the full `just test` and requires port 3002 free, so the review server is
-  started only once the final commit has landed.
+- Card uniformization Phases 2 (new-tab) and 3 (project-card single-source) were already satisfied (no code change), verified; see `repo-card-uniformization-plan.md`. The slop-audit findings are all remediated; see `slop-audit-remediation-plan.md`.
+- Review server: started after this commit via `just dev` on port 3002. The pre-commit hook runs the full `just test` and requires port 3002 free, so the review server is started only once the final commit has landed.

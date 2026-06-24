@@ -6,13 +6,15 @@ source: slop-audit.md
 
 # Complete Slop Audit Remediation Plan
 
-Replace [.agents/memories/slop-audit-remediation-plan.md](/home/dzack/gitclones/github-dashboard/.agents/memories/slop-audit-remediation-plan.md) with this complete plan before implementation. The goal is to remediate every `slop-audit.md` finding without relabeling, deleting evidence without burden transfer, adding fallbacks, or treating proof-free tests as proof.
+Replace [.agents/memories/slop-audit-remediation-plan.md](/home/dzack/gitclones/github-dashboard/.agents/memories/slop-audit-remediation-plan.md) with this complete plan before implementation.
+The goal is to remediate every `slop-audit.md` finding without relabeling, deleting evidence without burden transfer, adding fallbacks, or treating proof-free tests as proof.
 
 Use official contracts already checked for this plan: GitHub list branches and get commit docs establish branch responses expose commit SHA/URL while commit details expose commit metadata; GitHub Dependabot, code scanning, and secret scanning docs establish the live security-alert APIs and permission constraints; Vitest docs support `test.environment = "jsdom"`; unified docs support parsing markdown through `unified().use(remarkParse).parse(...)`.
 
 ## Disposition (2026-06-21)
 
-All `slop-audit.md` findings are remediated in committed code, verified by inspecting current source against the audit. Each burden is owned by real proof (the vitest unit suite, the live-API Playwright e2e in `tests/e2e/inbox-cache.spec.ts`, or strict `tsc`), not by labels or deletions:
+All `slop-audit.md` findings are remediated in committed code, verified by inspecting current source against the audit.
+Each burden is owned by real proof (the vitest unit suite, the live-API Playwright e2e in `tests/e2e/inbox-cache.spec.ts`, or strict `tsc`), not by labels or deletions:
 
 - NO-GLOBAL-QC / MOCK-STUB: `package.json` runs `test:unit` (vitest) and `test:e2e`; `vite.config.ts` sets the jsdom test environment; the mocked `PRDetailView.test.tsx` is gone, replaced by the real-browser e2e "real PR detail layout can be resized without obscuring security sidebar" plus a real unit test for the markdown-excerpt helper.
 - USER-DECEPTIVE faked commit dates: `server.ts` reads live branch-head `committedDate` via GraphQL (`fetchBranchHeadCommits`); no `Date.now()`-relative fabrication remains.
@@ -22,7 +24,8 @@ All `slop-audit.md` findings are remediated in committed code, verified by inspe
 - KNOWN-SOLUTION-BYPASS: single-item `/issues/:number` and `/prs/:number` endpoints exist and are used (e2e "issue and PR detail views load summary from single-item endpoints").
 - SPLIT-TRUTH: shared `src/utils/invariant.ts` and `src/utils/projectColors.ts` replace the duplicated helpers.
 - TEST-SLEEP: the cached-inbox e2e uses a held-route promise, not a fixed sleep.
-- HARDCODED-CONFIG / TYPING-COLLAPSE: `PORT` is env-driven and validated at startup; `tsconfig.json` is strict. The last hardcoded-path concern (`STATIC_DIST_DIR`/`dist`) was removed entirely when the production-static path was deleted from `server.ts`.
+- HARDCODED-CONFIG / TYPING-COLLAPSE: `PORT` is env-driven and validated at startup; `tsconfig.json` is strict.
+  The last hardcoded-path concern (`STATIC_DIST_DIR`/`dist`) was removed entirely when the production-static path was deleted from `server.ts`.
 
 Verification method: code inspection against the audit plus the existing green `just test` gate; not an exhaustive per-finding mutation run.
 
@@ -46,7 +49,8 @@ Verification method: code inspection against the audit plus the existing green `
 
 4. Direct server truth fixes
 - In `server.ts`, update repo sync timestamps on every successful `/api/github/repos` 200 response.
-- Replace branch date fabrication with live commit metadata: keep `/branches` for branch names and head SHAs, then fetch each head commit through `/repos/{owner}/{repo}/commits/{ref}` and set `commit.date` from the commit response’s committer date. If any commit metadata request fails, return a non-2xx response for the branch endpoint.
+- Replace branch date fabrication with live commit metadata: keep `/branches` for branch names and head SHAs, then fetch each head commit through `/repos/{owner}/{repo}/commits/{ref}` and set `commit.date` from the commit response’s committer date.
+  If any commit metadata request fails, return a non-2xx response for the branch endpoint.
 - Replace `sha-n/a` with an assertion that branch commit SHA exists.
 
 5. Security alert contract
@@ -99,7 +103,8 @@ Verification method: code inspection against the audit plus the existing green `
 ## Assumptions
 
 - This is pre-launch bespoke software; breaking internal API/type shapes is acceptable.
-- Live GitHub API access is required for proof. If the configured token lacks security-alert permissions, stop and fix credentials rather than mocking or suppressing those tests.
+- Live GitHub API access is required for proof.
+  If the configured token lacks security-alert permissions, stop and fix credentials rather than mocking or suppressing those tests.
 - Security telemetry means all live GitHub repository security alert classes surfaced by the dashboard: Dependabot, code scanning, and secret scanning.
 - PR layout proof belongs in Playwright because the original defect concerns integrated rendered layout, not component prop plumbing.
 - The final stored plan update is a repo mutation and must be done outside Plan Mode.

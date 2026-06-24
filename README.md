@@ -1,6 +1,7 @@
 # github-dashboard
 
-A local dashboard for tracking GitHub repositories, topic-based project groups, open issues, and pull requests. It integrates a multi-pane layout, command palette, and caching.
+A local dashboard for tracking GitHub repositories, topic-based project groups, open issues, and pull requests.
+It integrates a multi-pane layout, command palette, and caching.
 
 ## Installation
 
@@ -33,7 +34,8 @@ The application requires these environment variables:
 
 ## Data Boundaries
 
-Project metadata is derived from live GitHub repository topics. The dashboard does not persist project group state to a local database.
+Project metadata is derived from live GitHub repository topics.
+The dashboard does not persist project group state to a local database.
 
 ## License
 
