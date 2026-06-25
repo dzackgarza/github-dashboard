@@ -1,23 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
-  GitPullRequest,
   ExternalLink,
-  ChevronRight,
   MessageSquare,
   FileCode,
   ShieldAlert,
-  PlayCircle,
   Clock,
   CheckCircle,
   XCircle,
   AlertTriangle,
   Loader2,
   Calendar,
-  Lock,
   Compass,
   ArrowRight,
   CheckCircle2,
-  Terminal,
   Activity,
   History,
   Workflow,
@@ -25,14 +20,34 @@ import {
   ShieldCheck
 } from "lucide-react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
-import { PullRequest, DiffFile, Comment } from "../types";
+import { PullRequest, DiffFile, Comment, SecurityAlerts } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { WorkspaceBreadcrumbs } from "./WorkspacePrimitives";
 
 interface PRDetailViewProps {
   owner: string;
   repoName: string;
   pr: PullRequest;
   onRefreshItem: () => void;
+}
+
+interface PRReviewThread {
+  id: string;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+  startLine: number | null;
+  latestComment: {
+    id: string;
+    body: string;
+    created_at: string;
+    user: {
+      login: string;
+      avatar_url: string;
+      html_url?: string;
+    };
+  } | null;
 }
 
 export default function PRDetailView({
@@ -42,6 +57,8 @@ export default function PRDetailView({
   onRefreshItem
 }: PRDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
+  const { openRepo, openProject, openRepositoryExplorer, projectTags } = useWorkspace();
+  const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Tabs: "conversation", "diff"
   const [activeSubTab, setActiveSubTab] = useState<"conversation" | "diff">("conversation");
@@ -49,12 +66,20 @@ export default function PRDetailView({
   // Load detailed pull request (with files diff and CI statuses)
   const [prDetail, setPrDetail] = useState<PullRequest | null>(null);
   const [loading, setLoading] = useState(false);
+  const [prDetailError, setPrDetailError] = useState<string | null>(null);
 
   // Comments state
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [newCommentBody, setNewCommentBody] = useState("");
   const [postingComment, setPostingComment] = useState(false);
+  const [postCommentError, setPostCommentError] = useState<string | null>(null);
+
+  const [reviewThreads, setReviewThreads] = useState<PRReviewThread[]>([]);
+  const [loadingReviewThreads, setLoadingReviewThreads] = useState(false);
+  const [resolvingThreadId, setResolvingThreadId] = useState<string | null>(null);
+  const [reviewThreadsError, setReviewThreadsError] = useState<string | null>(null);
 
   // File diff selection
   const [selectedDiffFile, setSelectedDiffFile] = useState<DiffFile | null>(null);
@@ -62,59 +87,113 @@ export default function PRDetailView({
   // CI Workflow run detail expansion
   const [expandedCIRunIndex, setExpandedCIRunIndex] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetchPRDetails();
-    fetchComments();
-  }, [pr.number, fullName]);
-
-  const fetchPRDetails = async () => {
+  const fetchPRDetails = useCallback(async () => {
     setLoading(true);
+    setPrDetailError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/prs/${pr.number}/details`);
+      if (!res.ok) {
+        throw new Error(`PR details endpoint failed with ${res.status}`);
+      }
       const data = await res.json();
       setPrDetail(data);
       if (data.diff && data.diff.length > 0) {
         setSelectedDiffFile(data.diff[0]);
       }
     } catch (err) {
-      console.error("Failed fetching PR details", err);
+      setPrDetailError(`Failed to load pull request details: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoading(false);
     }
-  };
+  }, [owner, repoName, pr.number]);
 
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     setLoadingComments(true);
+    setCommentsError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${pr.number}/comments`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setComments(data);
+      if (!res.ok) {
+        throw new Error(`Comments endpoint failed with ${res.status}`);
       }
-    } catch {
-      // Ignore
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Comments response was not an array.");
+      }
+      setComments(data);
+    } catch (err) {
+      setCommentsError(`Failed to load comments: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingComments(false);
+    }
+  }, [owner, repoName, pr.number]);
+
+  const fetchReviewThreads = useCallback(async () => {
+    setLoadingReviewThreads(true);
+    setReviewThreadsError(null);
+    try {
+      const res = await fetch(`/api/github/repos/${owner}/${repoName}/prs/${pr.number}/review-threads`);
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        setReviewThreads(data as PRReviewThread[]);
+        return;
+      }
+
+      setReviewThreadsError(typeof data?.error === "string" ? data.error : "Failed to load unresolved review threads.");
+    } catch (err) {
+      setReviewThreadsError(`Failed to load unresolved review threads: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setLoadingReviewThreads(false);
+    }
+  }, [owner, repoName, pr.number]);
+
+  useEffect(() => {
+    void fetchPRDetails();
+    void fetchComments();
+    void fetchReviewThreads();
+  }, [fetchPRDetails, fetchComments, fetchReviewThreads]);
+
+  const handleResolveThread = async (threadId: string) => {
+    setResolvingThreadId(threadId);
+    try {
+      const res = await fetch(`/api/github/repos/${owner}/${repoName}/prs/${pr.number}/review-threads/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threadId })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(typeof data?.error === "string" ? data.error : "Failed to resolve review thread.");
+      }
+
+      setReviewThreads((prev) => prev.filter((thread) => thread.id !== threadId));
+    } catch (err) {
+      setReviewThreadsError(`Failed to resolve selected review thread: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setResolvingThreadId(null);
     }
   };
 
   const handlePostComment = async () => {
     if (!newCommentBody.trim()) return;
     setPostingComment(true);
+    setPostCommentError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${pr.number}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: newCommentBody })
       });
-      if (res.ok) {
-        const posted = await res.json();
-        setComments((prev) => [...prev, posted]);
-        setNewCommentBody("");
-        onRefreshItem();
+      if (!res.ok) {
+        throw new Error(`Comment post failed with ${res.status}`);
       }
+      const posted = await res.json();
+      setComments((prev) => [...prev, posted]);
+      setNewCommentBody("");
+      onRefreshItem();
     } catch (err) {
-      console.error("Comment post error", err);
+      setPostCommentError(`Failed to post comment: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setPostingComment(false);
     }
@@ -125,7 +204,12 @@ export default function PRDetailView({
     state: "pending",
     runs: [],
     unresolved_threads_count: 0,
-    security_alerts_count: 0
+    security_alerts: {
+      dependabot: { configured: false },
+      codeScanning: { configured: false },
+      secretScanning: { configured: false },
+      totalOpen: 0
+    } satisfies SecurityAlerts
   };
   const closingIssues = prDetail?.closing_issues || [];
   const qcHealth = prDetail?.qc_health || null;
@@ -139,6 +223,8 @@ export default function PRDetailView({
     }
     return "text-red-300 bg-red-950/30 border-red-900";
   };
+
+  const unresolvedReviewThreadCount = reviewThreads.length;
 
   const renderDiffLineElement = (line: string, index: number) => {
     let style = "text-gray-300 bg-transparent";
@@ -163,10 +249,14 @@ export default function PRDetailView({
       <div className="p-4 border-b border-[#3e3e3e] shrink-0 bg-[#252526] select-none">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5">
-              <span>{fullName}</span>
-              <ChevronRight size={10} className="text-gray-500" />
-              <span>Pull Request #{pr.number}</span>
+            <div className="pb-1.5">
+              <WorkspaceBreadcrumbs
+                items={[
+                  { label: "Repositories", onClick: openRepositoryExplorer },
+                  { label: fullName, onClick: () => openRepo(fullName) },
+                  { label: `Pull Request #${pr.number}` }
+                ]}
+              />
             </div>
             <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
               {pr.title}
@@ -185,13 +275,7 @@ export default function PRDetailView({
         </div>
 
         <div className="flex flex-wrap items-center gap-4 mt-3 text-[11.5px] text-gray-400">
-          <span className="px-3 py-1 text-xs font-bold font-sans rounded-full flex items-center gap-1.5 bg-purple-950/50 text-purple-400 border border-purple-900 leading-none">
-            <GitPullRequest size={13} className="text-purple-400 animate-pulse shrink-0" />
-            Open PR
-          </span>
-
           <span className="flex items-center gap-1">
-            <img src={pr.user.avatar_url} className="w-5 h-5 rounded-full ring-1 ring-gray-700" alt="" />
             <strong className="text-gray-300 font-semibold">@{pr.user.login}</strong>
           </span>
 
@@ -224,6 +308,21 @@ export default function PRDetailView({
             )}
             <span>CI Status: {ciStatus.state.toUpperCase()}</span>
           </div>
+          {repoProjects.map((project) => (
+            <button
+              key={project.id}
+              type="button"
+              onClick={() => openProject(project.id)}
+              className="px-2 py-0.5 rounded border text-[10px] font-mono font-semibold hover:bg-black/10"
+              style={{
+                backgroundColor: `${project.color}15`,
+                borderColor: `${project.color}45`,
+                color: project.color,
+              }}
+            >
+              {project.name}
+            </button>
+          ))}
         </div>
 
         {/* Workspace Tab navigation bar */}
@@ -254,18 +353,24 @@ export default function PRDetailView({
           <Loader2 className="animate-spin text-[#007acc]" size={32} />
           <div className="text-xs text-gray-500 font-mono">Unpacking pull request differential tree...</div>
         </div>
+      ) : prDetailError ? (
+        <div className="flex-1 flex items-center justify-center px-6 text-center text-xs text-red-400">
+          {prDetailError}
+        </div>
       ) : (
         <PanelGroup orientation="horizontal" className="flex-1 min-h-0 flex overflow-hidden">
-          <Panel defaultSize={75} minSize={15} className="flex flex-col min-h-0 min-w-0 overflow-hidden">
+          <Panel defaultSize="75%" minSize="15%" className="flex flex-col min-h-0 min-w-0 overflow-hidden">
             {/* LEFT CONTENT AREA: TAB 1 Conversation OR TAB 2 Diff */}
-            <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden">
+            <div
+              className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto overflow-x-hidden"
+              data-testid="pr-detail-main-panel"
+            >
             {activeSubTab === "conversation" ? (
               <div className="flex-1 overflow-y-auto p-5 space-y-5 custom-scrollbar bg-[#18181a]">
                 {/* Main description of original post */}
                 <div className="border border-gray-800/80 rounded bg-[#232325] overflow-hidden shadow-sm">
                   <div className="bg-[#2d2d30] px-4 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none">
                     <div className="flex items-center gap-2">
-                      <img src={pr.user.avatar_url} className="w-5 h-5 rounded-full" alt="" />
                       <span className="font-semibold text-white">@{pr.user.login}</span>
                       <span className="text-gray-500">submitted merger request</span>
                     </div>
@@ -312,6 +417,11 @@ export default function PRDetailView({
                 </div>
 
                 {/* Timeline comments list */}
+                {commentsError && (
+                  <div className="mb-4 text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+                    {commentsError}
+                  </div>
+                )}
                 {loadingComments ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="animate-spin text-gray-500" size={20} />
@@ -329,11 +439,6 @@ export default function PRDetailView({
                       >
                         <div className="bg-[#29292c] px-3.5 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none font-sans">
                           <div className="flex items-center gap-2">
-                            <img
-                              src={comment.user.avatar_url}
-                              alt=""
-                              className="w-4.5 h-4.5 rounded-full"
-                            />
                             <strong className="font-semibold text-white">@{comment.user.login}</strong>
                             <span className="text-gray-500">replied</span>
                           </div>
@@ -357,6 +462,11 @@ export default function PRDetailView({
                 {/* Add new message block */}
                 <div className="border border-gray-800 rounded-md bg-[#252526] p-4 space-y-3.5 shadow mt-6">
                   <h3 className="text-xs font-mono font-bold text-white uppercase tracking-wider select-none">Add review comments</h3>
+                  {postCommentError && (
+                    <div className="text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+                      {postCommentError}
+                    </div>
+                  )}
                   <textarea
                     rows={3}
                     placeholder="Type commentary here (Markdown supported)..."
@@ -450,11 +560,16 @@ export default function PRDetailView({
             </div>
           </Panel>
 
-          <PanelResizeHandle className="w-[4px] bg-[#1a1a1c]/80 hover:bg-[#007acc] active:bg-[#007acc] transition-colors cursor-col-resize select-none shrink-0" />
+          <PanelResizeHandle
+            className="w-[4px] bg-[#1a1a1c]/80 hover:bg-[#007acc] active:bg-[#007acc] transition-colors cursor-col-resize select-none shrink-0"
+          />
 
           {/* PERSISTENT RIGHT SIDEBAR: CI WORKFLOWS RUNS, OUTSTANDING SECURITY AUDITS, UNRESOLVED THREAD TRACKER */}
-          <Panel defaultSize={25} minSize={15} maxSize={80} className="flex flex-col min-h-0 min-w-0 overflow-hidden">
-            <div className="flex-1 bg-[#252526] border-l border-[#3e3e3e] flex flex-col justify-between select-none overflow-y-auto custom-scrollbar p-5 space-y-5 min-w-0">
+          <Panel defaultSize="25%" minSize="15%" maxSize="80%" className="flex flex-col min-h-0 min-w-0 overflow-hidden">
+            <div
+              className="flex-1 bg-[#252526] border-l border-[#3e3e3e] flex flex-col justify-between select-none overflow-y-auto custom-scrollbar p-5 space-y-5 min-w-0"
+              data-testid="pr-detail-sidebar"
+            >
               
               <div className="space-y-4">
                 <div className="space-y-2 pb-3.5 border-b border-[#3e3e3e]">
@@ -583,11 +698,11 @@ export default function PRDetailView({
                     <span>Security Alerts</span>
                   </span>
 
-                  {ciStatus.security_alerts_count > 0 ? (
+                  {ciStatus.security_alerts.totalOpen > 0 ? (
                     <div className="p-2.5 bg-red-950/20 border border-red-900/60 rounded text-[11px] leading-snug text-red-300 space-y-1">
                       <div className="font-bold flex items-center gap-1">
                         <AlertTriangle size={11} className="text-red-400" />
-                        <span>{ciStatus.security_alerts_count} security alerts</span>
+                        <span>{ciStatus.security_alerts.totalOpen} security alerts</span>
                       </div>
                       <p className="text-gray-400">
                         Review the repository security alerts in GitHub.
@@ -599,22 +714,103 @@ export default function PRDetailView({
                       No GitHub security alerts reported.
                     </div>
                   )}
+
+                  {/* Per-class state: a configured scanner shows its open count; an
+                      unconfigured one shows a visible "Not enabled" prompt so the user
+                      knows to turn it on, never silently conflated with zero alerts. */}
+                  <ul className="space-y-1 text-[10px] text-gray-300">
+                    {([
+                      { label: "Dependabot alerts", state: ciStatus.security_alerts.dependabot },
+                      { label: "Code scanning alerts", state: ciStatus.security_alerts.codeScanning },
+                      { label: "Secret scanning alerts", state: ciStatus.security_alerts.secretScanning }
+                    ]).map(({ label, state }) => (
+                      <li key={label} className="flex items-center justify-between gap-2">
+                        <span className="text-gray-400">{label}</span>
+                        {state.configured ? (
+                          <span className="font-mono text-gray-200">{state.open}</span>
+                        ) : (
+                          <span className="font-mono text-amber-400" title="Enable this scanner in the repository settings.">
+                            Not enabled
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
 
                 {/* Sidebar Section 4: Resolution discussions checklists */}
                 <div className="space-y-2">
                   <span className="text-[10px] font-mono font-bold tracking-wider text-gray-500 uppercase flex items-center gap-1.5">
                     <Activity size={12} className="text-purple-400" />
-                <span>Review Threads</span>
+                    <span>Review Threads</span>
                   </span>
-                  <div className="bg-[#1b1b1c] p-2.5 rounded border border-[#3e3e3e]/40 text-[10.5px] font-mono text-gray-400 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${ciStatus.unresolved_threads_count > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
-                      <span>{ciStatus.unresolved_threads_count} outstanding discussion threads remaining</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span>Review state from GitHub checks</span>
+                  <div className="bg-[#1b1b1c] p-2.5 rounded border border-[#3e3e3e]/40 text-[10.5px] font-mono text-gray-400">
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${unresolvedReviewThreadCount > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
+                        <span>{unresolvedReviewThreadCount} outstanding discussion threads remaining</span>
+                      </div>
+
+                      {reviewThreadsError && <div className="text-red-400">{reviewThreadsError}</div>}
+
+                      {loadingReviewThreads ? (
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="animate-spin text-gray-500" size={12} />
+                          <span>Loading unresolved threads...</span>
+                        </div>
+                      ) : unresolvedReviewThreadCount === 0 ? (
+                        <div className="text-gray-500">No unresolved review threads found.</div>
+                      ) : (
+                        <div className="space-y-2 overflow-y-auto max-h-56 pr-1">
+                          {reviewThreads.map((thread) => (
+                            <div key={thread.id} className="rounded border border-[#2f2f31] bg-[#18181b] p-2 space-y-1">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="text-gray-300 font-medium truncate">{thread.path}</div>
+                                  <div className="text-gray-500">
+                                    {thread.startLine ? (
+                                      thread.line !== null && thread.startLine === thread.line
+                                        ? `Line ${thread.line}`
+                                        : `Lines ${thread.startLine}-${thread.line ?? ""}`
+                                    ) : thread.line !== null
+                                      ? `Line ${thread.line}`
+                                      : "File-level thread"}
+                                    {thread.isOutdated ? " · outdated" : ""}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleResolveThread(thread.id)}
+                                  disabled={resolvingThreadId === thread.id}
+                                  className="px-2 py-1 rounded bg-[#007acc]/90 hover:bg-[#1a82d7] disabled:bg-gray-800 disabled:text-gray-600 text-white text-[10px] font-semibold transition-colors shrink-0"
+                                >
+                                  {resolvingThreadId === thread.id ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <Loader2 size={10} className="animate-spin" />
+                                      Resolving
+                                    </span>
+                                  ) : (
+                                    "Resolve"
+                                  )}
+                                </button>
+                              </div>
+                              {thread.latestComment ? (
+                                <div className="text-xs text-gray-300 break-words">
+                                  <span className="text-gray-500">@{thread.latestComment.user.login}:</span>
+                                  <span className="ml-1">{thread.latestComment.body}</span>
+                                </div>
+                              ) : (
+                                <div className="text-gray-500 italic">No comment preview loaded.</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-2 pt-2 border-t border-[#3e3e3e]/60">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                        <span>Review state from GitHub checks</span>
+                      </div>
                     </div>
                   </div>
                 </div>

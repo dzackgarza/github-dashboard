@@ -28,10 +28,13 @@ export interface Repo {
   description: string;
   html_url: string;
   private: boolean;
+  archived: boolean;
   stargazers_count: number;
   language: string;
   owner: User;
   updated_at: string;
+  latest_commit_at: string | null;
+  topics: string[];
   open_issues_count?: number;
 }
 
@@ -64,11 +67,25 @@ export interface CIRun {
   logs?: string;
 }
 
+// Per-class security telemetry. `configured: false` means the repo has that scanning
+// feature turned off (GitHub answered 403/404); it is distinct from a configured class
+// reporting zero open alerts.
+export type SecurityClassState =
+  | { configured: true; open: number }
+  | { configured: false };
+
+export interface SecurityAlerts {
+  dependabot: SecurityClassState;
+  codeScanning: SecurityClassState;
+  secretScanning: SecurityClassState;
+  totalOpen: number;
+}
+
 export interface CIStatus {
   state: "success" | "failure" | "pending";
   runs: CIRun[];
   unresolved_threads_count: number;
-  security_alerts_count: number;
+  security_alerts: SecurityAlerts;
 }
 
 export interface LocalCheckoutStatus {

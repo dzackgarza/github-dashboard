@@ -1,20 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   MessageSquare,
   Sparkles,
-  GitPullRequest,
-  CheckCircle2,
   Calendar,
   ExternalLink,
-  ChevronRight,
   User as UserIcon,
   Send,
   Tag,
-  CircleDot,
   Loader2
 } from "lucide-react";
 import { Issue, Comment } from "../types";
 import MarkdownViewer from "./MarkdownViewer";
+import { useWorkspace } from "../context/WorkspaceContext";
+import { WorkspaceBreadcrumbs } from "./WorkspacePrimitives";
 
 interface IssueDetailViewProps {
   owner: string;
@@ -30,51 +28,62 @@ export default function IssueDetailView({
   onRefreshItem
 }: IssueDetailViewProps) {
   const fullName = `${owner}/${repoName}`;
+  const { openRepo, openProject, openRepositoryExplorer, projectTags } = useWorkspace();
+  const repoProjects = projectTags.filter((project) => project.repos.includes(fullName));
 
   // Local comments state
   const [comments, setComments] = useState<Comment[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
   const [newCommentBody, setNewCommentBody] = useState("");
   const [postingComment, setPostingComment] = useState(false);
+  const [postCommentError, setPostCommentError] = useState<string | null>(null);
 
-  // Sync state if issue receives updates
-  useEffect(() => {
-    fetchComments();
-  }, [issue.number, fullName]);
-
-  const fetchComments = async () => {
+  const fetchComments = useCallback(async () => {
     setLoadingComments(true);
+    setCommentsError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${issue.number}/comments`);
-      const data = await res.json();
-      if (Array.isArray(data)) {
-        setComments(data);
+      if (!res.ok) {
+        throw new Error(`Comments endpoint failed with ${res.status}`);
       }
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Comments response was not an array.");
+      }
+      setComments(data);
     } catch (err) {
-      console.error("Failed loading comments list", err);
+      setCommentsError(`Failed to load comments: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setLoadingComments(false);
     }
-  };
+  }, [owner, repoName, issue.number]);
+
+  // Sync state if issue receives updates
+  useEffect(() => {
+    void fetchComments();
+  }, [fetchComments]);
 
   const handlePostComment = async () => {
     if (!newCommentBody.trim()) return;
     setPostingComment(true);
+    setPostCommentError(null);
     try {
       const res = await fetch(`/api/github/repos/${owner}/${repoName}/issues/${issue.number}/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: newCommentBody })
       });
-      if (res.ok) {
-        const posted = await res.json();
-        setComments((prev) => [...prev, posted]);
-        setNewCommentBody("");
-        // Notify sidebar/upper layers of actions
-        onRefreshItem();
+      if (!res.ok) {
+        throw new Error(`Comment post failed with ${res.status}`);
       }
+      const posted = await res.json();
+      setComments((prev) => [...prev, posted]);
+      setNewCommentBody("");
+      // Notify sidebar/upper layers of actions
+      onRefreshItem();
     } catch (err) {
-      console.error("Failed writing comment", err);
+      setPostCommentError(`Failed to post comment: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setPostingComment(false);
     }
@@ -88,10 +97,14 @@ export default function IssueDetailView({
         <div className="p-4 border-b border-[#3e3e3e] shrink-0 bg-[#252526]">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-[11px] font-mono text-gray-400 flex items-center gap-1 leading-none pb-1.5 select-none">
-                <span>{fullName}</span>
-                <ChevronRight size={10} className="text-gray-500" />
-                <span>Issue #{issue.number}</span>
+              <div className="pb-1.5 select-none">
+                <WorkspaceBreadcrumbs
+                  items={[
+                    { label: "Repositories", onClick: openRepositoryExplorer },
+                    { label: fullName, onClick: () => openRepo(fullName) },
+                    { label: `Issue #${issue.number}` }
+                  ]}
+                />
               </div>
               <h2 className="text-lg font-bold text-white tracking-tight leading-snug break-words">
                 {issue.title}
@@ -111,22 +124,6 @@ export default function IssueDetailView({
           </div>
 
           <div className="flex flex-wrap items-center gap-3.5 mt-3 text-[11.5px] text-gray-400 select-none border-t border-[#3e3e3e]/50 pt-2.5">
-            {/* Status pill */}
-            <span
-              className={`px-3 py-1 text-xs font-bold font-sans rounded-full flex items-center gap-1.5 select-none ${
-                issue.state === "open"
-                  ? "bg-emerald-950/50 text-emerald-400 border border-emerald-900"
-                  : "bg-purple-950/50 text-purple-400 border border-purple-900"
-              }`}
-            >
-              {issue.state === "open" ? (
-                <CircleDot size={13} className="text-emerald-500 shrink-0" />
-              ) : (
-                <CheckCircle2 size={13} className="text-purple-400 shrink-0" />
-              )}
-              {issue.state === "open" ? "Open" : "Closed"}
-            </span>
-
             <span className="flex items-center gap-1">
               <UserIcon size={12} className="text-gray-500" />
               <strong className="text-gray-300 font-semibold">{issue.user.login}</strong>
@@ -145,6 +142,21 @@ export default function IssueDetailView({
               <MessageSquare size={12} className="text-gray-500" />
               {comments.length} Comments
             </span>
+            {repoProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => openProject(project.id)}
+                className="px-2 py-0.5 rounded border text-[10px] font-mono font-semibold hover:bg-black/10"
+                style={{
+                  backgroundColor: `${project.color}15`,
+                  borderColor: `${project.color}45`,
+                  color: project.color,
+                }}
+              >
+                {project.name}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -154,11 +166,6 @@ export default function IssueDetailView({
           <div className="border border-[#3e3e3e] rounded bg-[#232325] overflow-hidden shadow-sm">
             <div className="bg-[#2d2d30] px-4 py-2 border-b border-[#3e3e3e] flex items-center justify-between text-xs select-none">
               <div className="flex items-center gap-2">
-                <img
-                  src={issue.user.avatar_url}
-                  alt={issue.user.login}
-                  className="w-5 h-5 rounded-full ring-1 ring-gray-700"
-                />
                 <span className="font-semibold text-white">{issue.user.login}</span>
                 <span className="text-gray-500">original poster commented</span>
               </div>
@@ -205,6 +212,11 @@ export default function IssueDetailView({
           </div>
 
           {/* Timeline Comments Stream */}
+          {commentsError && (
+            <div className="mb-4 text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+              {commentsError}
+            </div>
+          )}
           {loadingComments ? (
             <div className="flex flex-col items-center justify-center py-10 gap-2.5">
               <Loader2 className="animate-spin text-[#007acc]" size={24} />
@@ -225,11 +237,6 @@ export default function IssueDetailView({
                 >
                   <div className="bg-[#29292c] px-3.5 py-2 border-b border-gray-800 flex items-center justify-between text-xs select-none">
                     <div className="flex items-center gap-2">
-                      <img
-                        src={comment.user.avatar_url}
-                        alt={comment.user.login}
-                        className="w-4.5 h-4.5 rounded-full ring-1 ring-gray-700"
-                      />
                       <strong className="font-semibold text-white">{comment.user.login}</strong>
                       <span className="text-gray-500">commented</span>
                     </div>
@@ -253,6 +260,11 @@ export default function IssueDetailView({
           {/* New comment textbox */}
           <div className="border border-[#3e3e3e] rounded bg-[#252526] p-4 space-y-3 shadow-md mt-6">
             <h3 className="text-xs font-mono font-semibold text-white uppercase tracking-wider select-none">Add Feedback Conversation</h3>
+            {postCommentError && (
+              <div className="text-xs text-red-400 border border-red-900/60 rounded px-3 py-2">
+                {postCommentError}
+              </div>
+            )}
             <textarea
               rows={4}
               placeholder="Write a markdown comment... (Press Comment to post real-time sync)"
