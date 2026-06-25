@@ -6,6 +6,8 @@ if (typeof port !== "string" || port.trim().length === 0) {
 }
 const baseURL = `http://127.0.0.1:${port}`;
 
+const testScanRoot = process.cwd();
+
 export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 120_000,
@@ -20,6 +22,10 @@ export default defineConfig({
     command: "direnv exec . npm run dev",
     url: baseURL,
     reuseExistingServer: false,
+    env: {
+      ...process.env,
+      GITHUB_DASHBOARD_SCAN_ROOTS: testScanRoot,
+    },
     timeout: 120_000,
   },
   projects: [

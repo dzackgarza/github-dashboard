@@ -1522,3 +1522,27 @@ test("explorer right-click popup renders the canonical repo card clamped to the 
   await popupCard.getByRole("button", { name: "Manage projects" }).click();
   await expect(page.getByTestId("project-assignment-dialog")).toBeVisible();
 });
+
+test("repo control plane answers the MVP active-work, PR claim, local resume, and QC questions", async ({ page }) => {
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+
+  await expect(page.getByText("Inbox")).toBeVisible({ timeout: 60_000 });
+  await page.getByRole("button", { name: /^Repos \d+/ }).click();
+
+  await page.getByPlaceholder("Search repositories").fill("github-dashboard");
+  await page.getByTestId("repo-card-dzackgarza/github-dashboard").click();
+
+  await page.getByRole("button", { name: /Control Plane/ }).click();
+  const controlPlane = page.getByTestId("repo-control-plane");
+
+  await expect(controlPlane.getByText("GitHub Active Work")).toBeVisible({ timeout: 120_000 });
+  await expect(controlPlane.getByText("Linked PRs")).toBeVisible();
+  await expect(controlPlane.getByText("Local Resume")).toBeVisible();
+  await expect(controlPlane.getByText("QC Health")).toBeVisible();
+
+  await expect(controlPlane.getByText(/PR #13:/)).toHaveCount(5);
+  await expect(controlPlane.getByText(/#15/).first()).toBeVisible();
+  await expect(controlPlane.getByText("/tmp/github-dashboard-mvp-pr").first()).toBeVisible();
+  await expect(controlPlane.getByText("draft/mvp-dashboard-control-plane").first()).toBeVisible();
+  await expect(controlPlane.getByText(/current|stale|misconfigured|blocked_upstream|unverifiable|intentional_exception/).first()).toBeVisible();
+});

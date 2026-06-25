@@ -176,6 +176,7 @@ export function RepoCard({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
+            data-testid={`repo-card-${repo.full_name}`}
             onClick={() => onOpenRepo(repo.full_name)}
             className="px-2.5 py-1 rounded bg-[#094771] hover:bg-[#0e5f95] text-white text-[10px] font-mono font-semibold"
           >

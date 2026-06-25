@@ -1,3 +1,7 @@
+import type { QCHealth } from "./lib/qcDoctor";
+
+export type { QCHealth };
+
 export interface User {
   login: string;
   avatar_url: string;
@@ -84,6 +88,104 @@ export interface CIStatus {
   security_alerts: SecurityAlerts;
 }
 
+export interface LocalCheckoutStatus {
+  path: string;
+  repositoryFullName: string;
+  remoteName: string;
+  remoteUrl: string;
+  branch: string | null;
+  headSha: string;
+  dirty: boolean;
+  dirtyFiles: string[];
+  untracked: boolean;
+  untrackedFiles: string[];
+  ahead: number;
+  behind: number;
+  detached: boolean;
+  orphaned: boolean;
+  worktree: boolean;
+  gitDir: string;
+  gitCommonDir: string;
+  unpushedCommits: { sha: string; subject: string }[];
+}
+
+export interface LocalCheckoutInventory {
+  scanRoots: string[];
+  checkouts: LocalCheckoutStatus[];
+  rootErrors: { path: string; kind: string; message: string }[];
+}
+
+export type ResumeClassification =
+  | "ready"
+  | "active"
+  | "needs_local_reconciliation"
+  | "blocked_by_issue_or_pr"
+  | "waiting_for_ci_or_review"
+  | "ready_for_final_audit";
+
+export interface ActiveWorkIssue {
+  number: number;
+  title: string;
+  state: "OPEN" | "CLOSED";
+  url: string;
+}
+
+export interface ActiveWorkPullRequest {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  isDraft: boolean;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headRefName: string;
+  headRefOid: string;
+  baseRefName: string;
+  createdAt: string;
+  updatedAt: string;
+  closingIssues: ActiveWorkIssue[];
+  checkState: "success" | "failure" | "pending" | "unknown";
+  unresolvedReviewThreads: number;
+  reviewThreadsTruncated: boolean;
+  qc: QCHealth;
+}
+
+export interface ResumePacket {
+  repository: string;
+  issue: ActiveWorkIssue | null;
+  pullRequest: {
+    number: number;
+    title: string;
+    url: string;
+    state: "OPEN" | "CLOSED" | "MERGED";
+    draft: boolean;
+    headRefName: string;
+    headSha: string;
+    baseRefName: string;
+  };
+  local: LocalCheckoutStatus | null;
+  qc: QCHealth;
+  checkState: "success" | "failure" | "pending" | "unknown";
+  unresolvedReviewThreads: number;
+  reviewThreadsTruncated: boolean;
+  classification: ResumeClassification;
+}
+
+export interface ActiveWorkProjection {
+  repository: string;
+  local: {
+    checkout: LocalCheckoutStatus | null;
+    scanRoots: string[];
+    rootErrors: { path: string; kind: string; message: string }[];
+    configError: { kind: string; message: string } | null;
+  };
+  qc: QCHealth;
+  activeWork: {
+    issues: ActiveWorkIssue[];
+    pullRequests: ActiveWorkPullRequest[];
+  };
+  resumePackets: ResumePacket[];
+}
+
 export interface PullRequest {
   number: number;
   title: string;
@@ -97,6 +199,10 @@ export interface PullRequest {
   labels: Label[];
   diff?: DiffFile[];
   ci_status?: CIStatus;
+  is_draft?: boolean;
+  closing_issues?: ActiveWorkIssue[];
+  review_threads_truncated?: boolean;
+  qc_health?: QCHealth;
   base_branch?: string;
   head_branch?: string;
 }

@@ -10,9 +10,15 @@ import {
   GitBranch,
   X,
   Layers,
-  Inbox
+  Inbox,
+  ShieldCheck,
+  HardDrive,
+  GitCommit,
+  Link2,
+  AlertTriangle,
+  ExternalLink
 } from "lucide-react";
-import { Repo, Issue, PullRequest, ProjectTag, Label } from "../types";
+import { ActiveWorkProjection, Repo, Issue, PullRequest, ProjectTag, ResumePacket, Label } from "../types";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { toMarkdownExcerpt } from "../utils/markdownExcerpt";
 import { invariant } from "../utils/invariant";
@@ -87,6 +93,9 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [dashIssues, setDashIssues] = useState<Issue[]>([]);
   const [dashPRs, setDashPRs] = useState<PullRequest[]>([]);
+  const [activeWork, setActiveWork] = useState<ActiveWorkProjection | null>(null);
+  const [activeWorkError, setActiveWorkError] = useState<string | null>(null);
+  const [dashView, setDashView] = useState<"overview" | "control">("overview");
   const [projectIssues, setProjectIssues] = useState<RepoIssueRow[]>([]);
   const [projectPRs, setProjectPRs] = useState<RepoPrRow[]>([]);
   const [loadingDashboard, setLoadingDashboard] = useState(false);
@@ -139,12 +148,15 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
       setDashIssues([]);
       setDashPRs([]);
       setBranches([]);
+      setActiveWork(null);
+      setActiveWorkError(null);
       setLoadingDashboard(false);
       return;
     }
 
     let cancelled = false;
     setLoadingDashboard(true);
+    setDashView("overview");
     setRepoIssuesLabel("all");
     setRepoPrsLabel("all");
 
@@ -159,6 +171,25 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
         setDashPRs(prs);
         setBranches(nextBranches);
         setLoadingDashboard(false);
+      }
+    })();
+
+    void (async () => {
+      try {
+        const response = await fetch(`/api/github/repos/${selectedRepo.owner.login}/${selectedRepo.name}/active-work`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Active-work projection failed.");
+        }
+        if (!cancelled) {
+          setActiveWork(payload as ActiveWorkProjection);
+          setActiveWorkError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setActiveWork(null);
+          setActiveWorkError(err instanceof Error ? err.message : "Error loading active-work projection.");
+        }
       }
     })();
 
@@ -267,6 +298,34 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
         ? [{ label: "Projects" }]
         : [{ label: "Repositories" }];
 
+  const selectedCheckout = activeWork?.local.checkout ?? null;
+  const selectedQC = activeWork?.qc ?? null;
+
+  const formatShortSha = (sha?: string | null) => sha ? sha.slice(0, 8) : "no-head";
+
+  const qcClassName = (status?: string) => {
+    if (status === "current" || status === "intentional_exception") {
+      return "text-emerald-300 bg-emerald-950/30 border-emerald-900";
+    }
+    if (status === "stale" || status === "unverifiable") {
+      return "text-amber-300 bg-amber-950/30 border-amber-900";
+    }
+    return "text-red-300 bg-red-950/30 border-red-900";
+  };
+
+  const classificationClassName = (classification: ResumePacket["classification"]) => {
+    if (classification === "ready_for_final_audit" || classification === "ready") {
+      return "text-emerald-300 bg-emerald-950/30 border-emerald-900";
+    }
+    if (classification === "active") {
+      return "text-blue-300 bg-blue-950/30 border-blue-900";
+    }
+    if (classification === "waiting_for_ci_or_review") {
+      return "text-amber-300 bg-amber-950/30 border-amber-900";
+    }
+    return "text-red-300 bg-red-950/30 border-red-900";
+  };
+
   return (
     <div className="w-full h-full bg-[#1e1e1e] flex flex-col min-h-0 relative select-none text-[#cccccc] font-sans">
       <div className="bg-[#252526] py-3 px-6 border-b border-[#3e3e3e] flex items-center justify-between shrink-0 select-none">
@@ -315,6 +374,68 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold block">Local Resume</span>
+                <div className="bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40 space-y-2 text-[11px] font-mono">
+                  {activeWork?.local.configError ? (
+                    <div className="flex items-start gap-2 text-amber-300">
+                      <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                      <span className="break-words">{activeWork.local.configError.message}</span>
+                    </div>
+                  ) : selectedCheckout ? (
+                    <>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-gray-500 flex items-center gap-1"><HardDrive size={11} /> Path:</span>
+                        <span className="text-gray-300 break-all text-right">{selectedCheckout.path}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-gray-500 flex items-center gap-1"><GitBranch size={11} /> Branch:</span>
+                        <span className="text-gray-300 text-right">{selectedCheckout.branch || "detached"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-gray-500 flex items-center gap-1"><GitCommit size={11} /> Head:</span>
+                        <span className="text-amber-300 text-right">{formatShortSha(selectedCheckout.headSha)}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {selectedCheckout.dirty && <span className="px-1.5 py-0.5 rounded border border-red-900 bg-red-950/30 text-red-300">dirty</span>}
+                        {selectedCheckout.untracked && <span className="px-1.5 py-0.5 rounded border border-amber-900 bg-amber-950/30 text-amber-300">untracked</span>}
+                        {selectedCheckout.ahead > 0 && <span className="px-1.5 py-0.5 rounded border border-blue-900 bg-blue-950/30 text-blue-300">ahead {selectedCheckout.ahead}</span>}
+                        {selectedCheckout.behind > 0 && <span className="px-1.5 py-0.5 rounded border border-purple-900 bg-purple-950/30 text-purple-300">behind {selectedCheckout.behind}</span>}
+                        {selectedCheckout.unpushedCommits.length > 0 && <span className="px-1.5 py-0.5 rounded border border-blue-900 bg-blue-950/30 text-blue-300">unpushed {selectedCheckout.unpushedCommits.length}</span>}
+                        {selectedCheckout.detached && <span className="px-1.5 py-0.5 rounded border border-red-900 bg-red-950/30 text-red-300">detached</span>}
+                        {selectedCheckout.orphaned && <span className="px-1.5 py-0.5 rounded border border-amber-900 bg-amber-950/30 text-amber-300">orphaned</span>}
+                        {selectedCheckout.worktree && <span className="px-1.5 py-0.5 rounded border border-emerald-900 bg-emerald-950/30 text-emerald-300">worktree</span>}
+                        {!selectedCheckout.dirty && !selectedCheckout.untracked && selectedCheckout.ahead === 0 && selectedCheckout.behind === 0 && selectedCheckout.unpushedCommits.length === 0 && !selectedCheckout.detached && !selectedCheckout.orphaned && (
+                          <span className="px-1.5 py-0.5 rounded border border-emerald-900 bg-emerald-950/30 text-emerald-300">clean</span>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex items-center gap-2 text-gray-500">
+                      <HardDrive size={12} />
+                      <span>No local checkout matched {selectedRepo.full_name}.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold block">QC Health</span>
+                <div className="bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40 text-[11px] font-mono space-y-2">
+                  {selectedQC ? (
+                    <>
+                      <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border font-bold ${qcClassName(selectedQC.global_status)}`}>
+                        <ShieldCheck size={12} />
+                        <span>{selectedQC.global_status}</span>
+                      </div>
+                      <div className="text-gray-500 break-words">{selectedQC.source_detail}</div>
+                    </>
+                  ) : (
+                    <div className="text-gray-500">QC doctor projection not loaded.</div>
+                  )}
+                </div>
+              </div>
+
               <div className="space-y-1.5">
                 <span className="text-[10px] font-mono uppercase tracking-wider text-gray-500 font-bold">Description</span>
                 <p className="text-xs text-gray-400 leading-normal bg-[#1a1a1c] p-3 rounded border border-[#3e3e3e]/40">
@@ -345,61 +466,221 @@ export default function RepositoryExplorer({ panelParams }: RepositoryExplorerPr
           </div>
 
           <div className="flex-1 flex flex-col min-h-0 bg-[#1e1e1f]">
+            <div className="h-10 border-b border-[#3e3e3e] bg-[#252526] flex items-stretch shrink-0 select-none">
+              <button
+                onClick={() => setDashView("overview")}
+                className={`px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 ${
+                  dashView === "overview" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <Layers size={13} className="text-[#007acc]" />
+                <span>Overview</span>
+              </button>
+              <button
+                onClick={() => setDashView("control")}
+                className={`px-4 text-xs font-mono font-bold flex items-center gap-1.5 transition-colors border-b-2 ${
+                  dashView === "control" ? "border-[#007acc] text-white" : "border-transparent text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                <ShieldCheck size={13} className="text-emerald-400" />
+                <span>Control Plane ({activeWork?.resumePackets.length ?? 0})</span>
+              </button>
+            </div>
             <div className="flex-1 overflow-y-auto p-6 space-y-7 select-text custom-scrollbar">
-              {loadingDashboard && (
-                <div className="flex items-center gap-2 rounded border border-[#3e3e3e]/70 bg-[#222224] px-3 py-2 text-xs text-gray-400 font-mono">
-                  <RefreshCw className="animate-spin text-[#007acc]" size={14} />
-                  <span>Loading repository dashboard...</span>
+              {dashView === "overview" ? (
+                <>
+                  {loadingDashboard && (
+                    <div className="flex items-center gap-2 rounded border border-[#3e3e3e]/70 bg-[#222224] px-3 py-2 text-xs text-gray-400 font-mono">
+                      <RefreshCw className="animate-spin text-[#007acc]" size={14} />
+                      <span>Loading repository dashboard...</span>
+                    </div>
+                  )}
+                  {renderIssueSection({
+                    title: `Issues (${repoIssues.length})`,
+                    icon: <AlertCircle size={14} className="text-emerald-500" />,
+                    labels: repoIssueLabels,
+                    labelValue: repoIssuesLabel,
+                    onLabelChange: setRepoIssuesLabel,
+                    labelTestId: "repo-issues-label-filter",
+                    rows: repoIssues,
+                    emptyCopy: "No issues found.",
+                    rowTestId: "repo-issue-row",
+                    rowLabelTestId: "issue-row-label",
+                    onOpen: (issue) => openIssue(selectedRepo, issue)
+                  })}
+                  {renderIssueSection({
+                    title: `PRs (${repoPRs.length})`,
+                    icon: <GitPullRequest size={14} className="text-purple-400" />,
+                    labels: repoPrLabels,
+                    labelValue: repoPrsLabel,
+                    onLabelChange: setRepoPrsLabel,
+                    labelTestId: "repo-prs-label-filter",
+                    rows: repoPRs,
+                    emptyCopy: "No PRs found.",
+                    rowTestId: "repo-pr-row",
+                    rowLabelTestId: "pr-row-label",
+                    onOpen: (pr) => openPR(selectedRepo, pr)
+                  })}
+
+                  <section className="space-y-3">
+                    <div className="flex items-center gap-2 border-b border-[#3e3e3e] pb-2">
+                      <GitBranch size={14} className="text-blue-400" />
+                      <h3 className="text-xs font-mono font-bold text-white">Branches ({branches.length})</h3>
+                    </div>
+                    {branches.length === 0 ? (
+                      <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+                        <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
+                        <p className="text-xs font-mono">No branches found.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {branches.map((branch) => (
+                          <div key={branch.name} className="p-3 rounded bg-[#252526] border border-[#3e3e3e]/80 flex items-center justify-between gap-4">
+                            <span className="text-xs font-mono text-white break-all">{branch.name}</span>
+                            <span className="text-[10px] font-mono text-gray-500">{formatRelativeTime(branch.commit.date)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                </>
+              ) : (
+                <div className="space-y-4" data-testid="repo-control-plane">
+                  {activeWorkError ? (
+                    <div className="bg-red-950/20 border border-red-900/60 rounded p-4 text-red-200 text-xs font-mono flex items-start gap-2">
+                      <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                      <span className="break-words">{activeWorkError}</span>
+                    </div>
+                  ) : !activeWork ? (
+                    <div className="h-40 flex items-center justify-center text-gray-500 text-xs font-mono">
+                      <RefreshCw className="animate-spin mr-2 text-[#007acc]" size={15} />
+                      Loading control-plane projection...
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 xl:grid-cols-4 gap-3">
+                        <div className="bg-[#252526] border border-[#3e3e3e]/80 rounded p-3 min-w-0">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase font-bold flex items-center gap-1.5">
+                            <AlertCircle size={12} className="text-amber-400" />
+                            GitHub Active Work
+                          </div>
+                          <div className="text-xl text-white font-bold mt-1">{activeWork.activeWork.issues.length}</div>
+                          <div className="text-[10px] text-gray-500 font-mono mt-1">open issues in this repository</div>
+                        </div>
+                        <div className="bg-[#252526] border border-[#3e3e3e]/80 rounded p-3 min-w-0">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase font-bold flex items-center gap-1.5">
+                            <GitPullRequest size={12} className="text-purple-400" />
+                            Linked PRs
+                          </div>
+                          <div className="text-xl text-white font-bold mt-1">{activeWork.activeWork.pullRequests.length}</div>
+                          <div className="text-[10px] text-gray-500 font-mono mt-1">open pull requests checked for claims</div>
+                        </div>
+                        <div className="bg-[#252526] border border-[#3e3e3e]/80 rounded p-3 min-w-0">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase font-bold flex items-center gap-1.5">
+                            <HardDrive size={12} className="text-blue-400" />
+                            Local Resume
+                          </div>
+                          <div className="text-xs text-white font-bold mt-2 break-all">
+                            {activeWork.local.checkout?.path || activeWork.local.configError?.kind || "no matching checkout"}
+                          </div>
+                          <div className="text-[10px] text-gray-500 font-mono mt-1">
+                            {activeWork.local.checkout?.branch || "no branch"}
+                          </div>
+                        </div>
+                        <div className="bg-[#252526] border border-[#3e3e3e]/80 rounded p-3 min-w-0">
+                          <div className="text-[10px] font-mono text-gray-500 uppercase font-bold flex items-center gap-1.5">
+                            <ShieldCheck size={12} className="text-emerald-400" />
+                            QC Health
+                          </div>
+                          <div className={`inline-flex mt-2 px-2 py-1 rounded border text-[11px] font-mono font-bold ${qcClassName(activeWork.qc.global_status)}`}>
+                            {activeWork.qc.global_status}
+                          </div>
+                          <div className="text-[10px] text-gray-500 font-mono mt-1 break-words">{activeWork.qc.source}</div>
+                        </div>
+                      </div>
+
+                      {activeWork.local.rootErrors.length > 0 && (
+                        <div className="bg-amber-950/20 border border-amber-900/60 rounded p-3 text-[11px] text-amber-200 font-mono space-y-1">
+                          {activeWork.local.rootErrors.map((error) => (
+                            <div key={`${error.kind}-${error.path}`} className="break-words">
+                              {error.kind}: {error.message}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {activeWork.resumePackets.length === 0 ? (
+                        <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
+                          <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
+                          <p className="text-xs font-mono">No active PR-to-issue resume packets found.</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {activeWork.resumePackets.map((packet) => (
+                            <div
+                              key={`${packet.pullRequest.number}-${packet.issue?.number ?? "no-issue"}`}
+                              className="bg-[#252526] border border-[#3e3e3e]/80 rounded p-4 space-y-3"
+                            >
+                              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                                <div className="min-w-0 space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className={`px-2 py-0.5 rounded border text-[10px] font-mono font-bold ${classificationClassName(packet.classification)}`}>
+                                      {packet.classification}
+                                    </span>
+                                    <span className="text-white text-sm font-bold break-words">
+                                      {packet.issue ? `#${packet.issue.number} ${packet.issue.title}` : "Unclaimed issue subtree"}
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-gray-400 font-mono flex flex-wrap gap-x-3 gap-y-1">
+                                    <span className="flex items-center gap-1">
+                                      <Link2 size={11} className="text-purple-400" />
+                                      PR #{packet.pullRequest.number}: {packet.pullRequest.title}
+                                    </span>
+                                    <span>{packet.pullRequest.draft ? "draft" : "open"}</span>
+                                    <span>{packet.checkState}</span>
+                                    <span>{packet.unresolvedReviewThreads} unresolved threads</span>
+                                  </div>
+                                </div>
+                                <a
+                                  href={packet.pullRequest.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 text-[11px] font-mono px-2 py-1 rounded border border-[#3e3e3e] text-gray-300 hover:text-white hover:border-gray-500 flex items-center gap-1"
+                                >
+                                  <ExternalLink size={12} />
+                                  GitHub
+                                </a>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px] font-mono">
+                                <div className="bg-[#1a1a1c] border border-[#3e3e3e]/50 rounded p-2 min-w-0">
+                                  <div className="text-gray-500 uppercase text-[9.5px] font-bold mb-1">Claiming PR</div>
+                                  <div className="text-gray-300 break-all">{packet.pullRequest.headRefName}</div>
+                                  <div className="text-amber-300 mt-1">{formatShortSha(packet.pullRequest.headSha)}</div>
+                                </div>
+                                <div className="bg-[#1a1a1c] border border-[#3e3e3e]/50 rounded p-2 min-w-0">
+                                  <div className="text-gray-500 uppercase text-[9.5px] font-bold mb-1">Local Resumability</div>
+                                  <div className="text-gray-300 break-all">{packet.local?.path || "no local checkout"}</div>
+                                  <div className="text-gray-500 mt-1">
+                                    {packet.local ? `${packet.local.branch || "detached"} / ${packet.local.dirty || packet.local.untracked ? "uncommitted changes" : "worktree recorded"}` : "scan has no match"}
+                                  </div>
+                                </div>
+                                <div className="bg-[#1a1a1c] border border-[#3e3e3e]/50 rounded p-2 min-w-0">
+                                  <div className="text-gray-500 uppercase text-[9.5px] font-bold mb-1">QC Doctor</div>
+                                  <div className={`inline-flex px-2 py-0.5 rounded border font-bold ${qcClassName(packet.qc.global_status)}`}>
+                                    {packet.qc.global_status}
+                                  </div>
+                                  <div className="text-gray-500 mt-1 break-words">{packet.qc.source_detail}</div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
-              {renderIssueSection({
-                title: `Issues (${repoIssues.length})`,
-                icon: <AlertCircle size={14} className="text-emerald-500" />,
-                labels: repoIssueLabels,
-                labelValue: repoIssuesLabel,
-                onLabelChange: setRepoIssuesLabel,
-                labelTestId: "repo-issues-label-filter",
-                rows: repoIssues,
-                emptyCopy: "No issues found.",
-                rowTestId: "repo-issue-row",
-                rowLabelTestId: "issue-row-label",
-                onOpen: (issue) => openIssue(selectedRepo, issue)
-              })}
-              {renderIssueSection({
-                title: `PRs (${repoPRs.length})`,
-                icon: <GitPullRequest size={14} className="text-purple-400" />,
-                labels: repoPrLabels,
-                labelValue: repoPrsLabel,
-                onLabelChange: setRepoPrsLabel,
-                labelTestId: "repo-prs-label-filter",
-                rows: repoPRs,
-                emptyCopy: "No PRs found.",
-                rowTestId: "repo-pr-row",
-                rowLabelTestId: "pr-row-label",
-                onOpen: (pr) => openPR(selectedRepo, pr)
-              })}
-
-              <section className="space-y-3">
-                <div className="flex items-center gap-2 border-b border-[#3e3e3e] pb-2">
-                  <GitBranch size={14} className="text-blue-400" />
-                  <h3 className="text-xs font-mono font-bold text-white">Branches ({branches.length})</h3>
-                </div>
-                {branches.length === 0 ? (
-                  <div className="bg-[#161618] p-8 rounded border border-[#3e3e3e]/40 text-center text-gray-500">
-                    <CircleDot size={20} className="mx-auto text-gray-600 mb-2" />
-                    <p className="text-xs font-mono">No branches found.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {branches.map((branch) => (
-                      <div key={branch.name} className="p-3 rounded bg-[#252526] border border-[#3e3e3e]/80 flex items-center justify-between gap-4">
-                        <span className="text-xs font-mono text-white break-all">{branch.name}</span>
-                        <span className="text-[10px] font-mono text-gray-500">{formatRelativeTime(branch.commit.date)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
             </div>
           </div>
         </div>

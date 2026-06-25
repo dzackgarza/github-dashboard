@@ -5,6 +5,20 @@ import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import pMap from "p-map";
 import { assertValidProjectTopicName, deriveProjectTagsFromRepos } from "./src/utils/projectTopics";
+import { classifyResumePacket, countUnresolvedReviewThreads, extractClosingIssueReferences } from "./src/lib/activeWork";
+import {
+  LocalCheckoutInventory,
+  LocalCheckoutStatus,
+  parseScanRootsConfig,
+  scanLocalCheckouts,
+} from "./src/server/localCheckouts";
+import {
+  CheckRunOutput,
+  extractQCDoctorHealthFromCheckRuns,
+  QCHealth,
+  resolveQCHealthForProjection,
+  unavailableQCHealth,
+} from "./src/server/qcHealth";
 
 dotenv.config();
 
@@ -575,6 +589,184 @@ function updateCachedRepoTopics(fullName: string, topics: string[]): void {
       return void 0;
     });
   return void 0;
+}
+
+// Check GITHUB_TOKEN configuration
+
+// --- MVP control-plane helpers (GraphQL active-work + local checkout scan) ---
+async function githubGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `bearer ${GITHUB_TOKEN}`,
+      "Content-Type": "application/json",
+      "User-Agent": "GitHub-PR-Issue-Manager-Dashboard"
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const limit = response.headers.get("x-ratelimit-limit");
+  const remaining = response.headers.get("x-ratelimit-remaining");
+  const reset = response.headers.get("x-ratelimit-reset");
+  if (limit) globalRateLimit.limit = parseInt(limit);
+  if (remaining) globalRateLimit.remaining = parseInt(remaining);
+  if (reset) globalRateLimit.reset = parseInt(reset);
+
+  const payload = await response.json();
+  if (!response.ok || payload.errors) {
+    const message = payload.errors?.map((error: { message: string }) => error.message).join("; ") || response.statusText;
+    throw new Error(`GitHub GraphQL request failed: ${message}`);
+  }
+  return payload.data as T;
+}
+
+
+interface GraphQLIssueNode {
+  number: number;
+  title: string;
+  state: "OPEN" | "CLOSED";
+  url: string;
+}
+
+interface GraphQLReviewThreadNode {
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+}
+
+interface GraphQLPRNode {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  isDraft: boolean;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headRefName: string;
+  headRefOid: string;
+  baseRefName: string;
+  createdAt: string;
+  updatedAt: string;
+  closingIssuesReferences: {
+    nodes: GraphQLIssueNode[];
+  };
+  reviewThreads: {
+    nodes: GraphQLReviewThreadNode[];
+    pageInfo: {
+      hasNextPage: boolean;
+    };
+  };
+  statusCheckRollup: {
+    state: string;
+  } | null;
+}
+
+interface ActiveWorkGraphQLResponse {
+  repository: {
+    issues: {
+      nodes: GraphQLIssueNode[];
+    };
+    pullRequests: {
+      nodes: GraphQLPRNode[];
+    };
+  } | null;
+}
+
+function getLocalCheckoutInventory(): LocalCheckoutInventory {
+  return scanLocalCheckouts(parseScanRootsConfig(process.env.GITHUB_DASHBOARD_SCAN_ROOTS));
+}
+
+function mapGraphQLCheckState(state: string | null | undefined): "success" | "failure" | "pending" | "unknown" {
+  if (state === "SUCCESS") return "success";
+  if (state === "FAILURE" || state === "ERROR") return "failure";
+  if (state === "PENDING" || state === "EXPECTED") return "pending";
+  return "unknown";
+}
+
+async function fetchCheckRunsForSha(fullName: string, sha: string): Promise<CheckRunOutput[]> {
+  const { data, status } = await githubFetch<{ check_runs?: CheckRunOutput[] }>(`/repos/${fullName}/commits/${sha}/check-runs?per_page=100`);
+  if (status !== 200) {
+    throw new Error(`GitHub check runs request failed for ${fullName}@${sha} with status ${status}.`);
+  }
+  return Array.isArray(data?.check_runs) ? data.check_runs : [];
+}
+
+async function fetchRepositoryActiveWork(owner: string, repo: string) {
+  const query = `
+    query RepositoryActiveWork($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        issues(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            number
+            title
+            state
+            url
+          }
+        }
+        pullRequests(states: OPEN, first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+          nodes {
+            number
+            title
+            body
+            url
+            isDraft
+            state
+            headRefName
+            headRefOid
+            baseRefName
+            createdAt
+            updatedAt
+            closingIssuesReferences(first: 20) {
+              nodes {
+                number
+                title
+                state
+                url
+              }
+            }
+            reviewThreads(first: 100) {
+              nodes {
+                isResolved
+                isOutdated
+                path
+                line
+              }
+              pageInfo {
+                hasNextPage
+              }
+            }
+            statusCheckRollup {
+              state
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await githubGraphQL<ActiveWorkGraphQLResponse>(query, { owner, repo });
+  if (!data.repository) {
+    throw new Error(`GitHub repository ${owner}/${repo} was not found by GraphQL.`);
+  }
+  return data.repository;
+}
+
+function matchCheckout(inventory: LocalCheckoutInventory | null, fullName: string): LocalCheckoutStatus | null {
+  return inventory?.checkouts.find((checkout) => checkout.repositoryFullName === fullName) ?? null;
+}
+
+function summarizeLocalForClassification(checkout: LocalCheckoutStatus | null) {
+  return {
+    exists: checkout !== null,
+    dirty: checkout?.dirty ?? false,
+    untracked: checkout?.untracked ?? false,
+    ahead: checkout?.ahead ?? 0,
+    behind: checkout?.behind ?? 0,
+    detached: checkout?.detached ?? false,
+    orphaned: checkout?.orphaned ?? false,
+    unpushedCommitCount: checkout?.unpushedCommits.length ?? 0,
+  };
 }
 
 // Check GITHUB_TOKEN configuration
@@ -1180,6 +1372,148 @@ app.get("/api/github/rate-limit_status", (_req, res) => {
 app.get("/api/github/sync-logs", (_req, res) => {
   return res.json(syncLogs);
 });
+
+// --- MVP control-plane endpoints ---
+app.get("/api/local/checkouts", (req, res) => {
+  try {
+    return res.json(getLocalCheckoutInventory());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    addLog("Local checkouts", "ERROR", message);
+    return res.status(500).json({
+      error: {
+        kind: "local_checkout_config_error",
+        message,
+      },
+    });
+  }
+});
+
+app.get("/api/github/repos/:owner/:repo/active-work", asyncHandler(async (req, res) => {
+  const { owner, repo } = req.params;
+  const fullName = `${owner}/${repo}`;
+
+  let inventory: LocalCheckoutInventory | null = null;
+  let localConfigError: { kind: string; message: string } | null = null;
+  try {
+    inventory = getLocalCheckoutInventory();
+  } catch (error) {
+    localConfigError = {
+      kind: "local_checkout_config_error",
+      message: error instanceof Error ? error.message : String(error),
+    };
+    addLog(fullName, "ERROR", localConfigError.message);
+  }
+
+  try {
+    const repository = await fetchRepositoryActiveWork(owner, repo);
+    const checkout = matchCheckout(inventory, fullName);
+    const issueByNumber = new Map(repository.issues.nodes.map((issue) => [issue.number, issue]));
+    const enrichedPullRequests = [];
+    const resumePackets = [];
+    const localQCHealth = checkout ? resolveQCHealthForProjection(fullName, checkout, []) : null;
+    let repositoryQCHealth = localQCHealth
+      ?? unavailableQCHealth(fullName, "No qc-doctor check output or local ai-review-ci doctor payload was available.");
+
+    for (const pr of repository.pullRequests.nodes) {
+      const checkRuns = await fetchCheckRunsForSha(fullName, pr.headRefOid);
+      const qcFromCheck = checkout ? null : extractQCDoctorHealthFromCheckRuns(fullName, checkRuns);
+      const qcHealth = localQCHealth
+        ?? qcFromCheck
+        ?? unavailableQCHealth(fullName, `No qc-doctor check output was available on PR #${pr.number}.`);
+      if (!localQCHealth && qcFromCheck) {
+        repositoryQCHealth = qcFromCheck;
+      }
+
+      const closingIssueNumbers = new Set<number>();
+      const closingIssues = [...pr.closingIssuesReferences.nodes];
+      for (const issue of closingIssues) {
+        closingIssueNumbers.add(issue.number);
+      }
+      for (const ref of extractClosingIssueReferences(pr.body || "", fullName)) {
+        if (ref.owner === owner && ref.repo === repo && !closingIssueNumbers.has(ref.number)) {
+          const issue = issueByNumber.get(ref.number);
+          closingIssues.push(issue ?? {
+            number: ref.number,
+            title: `Issue #${ref.number}`,
+            state: "OPEN",
+            url: `https://github.com/${fullName}/issues/${ref.number}`,
+          });
+          closingIssueNumbers.add(ref.number);
+        }
+      }
+
+      const unresolvedReviewThreads = countUnresolvedReviewThreads(pr.reviewThreads.nodes);
+      const checkState = mapGraphQLCheckState(pr.statusCheckRollup?.state);
+      const localClassificationInput = summarizeLocalForClassification(checkout);
+      const linkedIssues = closingIssues.length > 0 ? closingIssues : [null];
+
+      for (const linkedIssue of linkedIssues) {
+        resumePackets.push({
+          repository: fullName,
+          issue: linkedIssue,
+          pullRequest: {
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            state: pr.state,
+            draft: pr.isDraft,
+            headRefName: pr.headRefName,
+            headSha: pr.headRefOid,
+            baseRefName: pr.baseRefName,
+          },
+          local: checkout,
+          qc: qcHealth,
+          checkState,
+          unresolvedReviewThreads,
+          reviewThreadsTruncated: pr.reviewThreads.pageInfo.hasNextPage,
+          classification: classifyResumePacket({
+            issueState: linkedIssue ? (linkedIssue.state === "OPEN" ? "open" : "closed") : null,
+            prState: pr.state === "OPEN" ? "open" : "closed",
+            prDraft: pr.isDraft,
+            checkState,
+            unresolvedReviewThreads,
+            local: localClassificationInput,
+            qcGlobalStatus: qcHealth.global_status,
+          }),
+        });
+      }
+
+      enrichedPullRequests.push({
+        ...pr,
+        closingIssues,
+        checkRuns: checkRuns.map((run) => ({
+          name: run.name,
+          status: run.status,
+          conclusion: run.conclusion,
+        })),
+        checkState,
+        unresolvedReviewThreads,
+        reviewThreadsTruncated: pr.reviewThreads.pageInfo.hasNextPage,
+        qc: qcHealth,
+      });
+    }
+
+    return res.json({
+      repository: fullName,
+      local: {
+        checkout,
+        scanRoots: inventory?.scanRoots ?? [],
+        rootErrors: inventory?.rootErrors ?? [],
+        configError: localConfigError,
+      },
+      qc: repositoryQCHealth,
+      activeWork: {
+        issues: repository.issues.nodes,
+        pullRequests: enrichedPullRequests,
+      },
+      resumePackets,
+    });
+  } catch (error) {
+    addLog(fullName, "ERROR", `Active-work projection failed: ${error instanceof Error ? error.message : error}`);
+    return res.status(500).json({ error: "GitHub active-work projection failed." });
+  }
+}));
 
 // Terminal error handler. Async routes are wrapped in asyncHandler, which forwards any
 // rejection here via next(err). This is the single 500 responder; per-route catch-to-500
