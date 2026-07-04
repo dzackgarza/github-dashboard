@@ -1,10 +1,11 @@
 dev:
-    npm run dev
+    direnv exec . npm run dev
 
 build:
     npm run build
 
 test:
-    npm run lint
-    npm run test:unit
-    npm run test:e2e
+    @just -f ~/ai-review-ci/justfiles/bun.just -d . test
+
+test-ci:
+    @just -f ~/ai-review-ci/justfiles/bun.just -d . test-ci

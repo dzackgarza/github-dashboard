@@ -6,8 +6,6 @@ import {
   FolderOpen,
   GitPullRequest,
   CheckCircle2,
-  AlertCircle,
-  Hash,
   Search,
   FolderGit,
   Tags,
@@ -17,29 +15,34 @@ import {
 } from "lucide-react";
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from "react-resizable-panels";
 import { Repo, Issue, PullRequest, ProjectTag } from "../types";
+import { ProjectAssignmentDialog } from "./WorkspacePrimitives";
 
-const PROJECT_COLORS = ["#3b82f6", "#10b981", "#ef4444", "#a855f7", "#f59e0b", "#14b8a6", "#f43f5e", "#64748b"];
+type SidebarContextMenu =
+  | { type: "repo"; x: number; y: number; repoFullName: string }
+  | { type: "repositories"; x: number; y: number }
+  | { type: "projects"; x: number; y: number }
+  | { type: "project"; x: number; y: number; projectId: string };
 
 interface VSCodeSidebarProps {
   activeView: "explorer" | "sync" | "settings";
   repos: Repo[];
   projectTags: ProjectTag[];
   syncTimestamps: Record<string, string>;
-  isSyncing: Record<string, boolean>;
   onSelectIssue: (owner: string, repoName: string, issue: Issue) => void;
   onSelectPR: (owner: string, repoName: string, pr: PullRequest) => void;
   onAddProjectTag: (tagName: string, repoFullName: string) => void;
-  onCreateProjectTag: (name: string, color: string) => void;
-  onCreateProjectWithRepo: (name: string, color: string, repoFullName: string) => void;
+  onCreateProjectWithRepo: (name: string, repoFullName: string) => void;
   onRemoveRepoFromTag: (tagId: string, repoFullName: string) => void;
+  onDeleteProjectTag: (tagId: string) => void;
   openRepo: (repoFullName: string) => void;
   openProject: (projectId: string) => void;
+  openRepositoryExplorer: () => void;
+  openProjectsDashboard: () => void;
   openTabs: (id: string, type: "issue" | "pr" | "settings" | "welcome", title: string, owner?: string, repo?: string, number?: number) => void;
   activeTabId: string;
   onClose?: () => void;
   selectedProjectFilter: string;
   activeProjectDashboardId: string | null;
-  onSelectProjectFilter: (filterId: string) => void;
 }
 
 export default function VSCodeSidebar({
@@ -47,29 +50,27 @@ export default function VSCodeSidebar({
   repos,
   projectTags,
   syncTimestamps,
-  isSyncing,
   onSelectIssue,
   onSelectPR,
   onAddProjectTag,
-  onCreateProjectTag,
   onCreateProjectWithRepo,
   onRemoveRepoFromTag,
+  onDeleteProjectTag,
   openRepo,
   openProject,
+  openRepositoryExplorer,
+  openProjectsDashboard,
   openTabs,
   activeTabId,
   onClose,
   selectedProjectFilter,
-  activeProjectDashboardId,
-  onSelectProjectFilter
+  activeProjectDashboardId
 }: VSCodeSidebarProps) {
   // Navigation / Collapsible section states
   const [reposExpanded, setReposExpanded] = useState(true);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
-  const [newProjectName, setNewProjectName] = useState("");
-  const [contextProjectName, setContextProjectName] = useState("");
 
   // Track expanded repositories
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
@@ -81,59 +82,123 @@ export default function VSCodeSidebar({
   const [repoPRs, setRepoPRs] = useState<Record<string, PullRequest[]>>({});
   const [loadingContent, setLoadingContent] = useState<Record<string, boolean>>({});
 
+  const normalizeFullName = (fullName: string) => fullName.replace(/\//g, "-");
+
   // Right-click Context Menu state
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    repoFullName: string;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<SidebarContextMenu | null>(null);
+  const [assignmentTarget, setAssignmentTarget] = useState<
+    { type: "repo"; repo: Repo } | { type: "project"; project: ProjectTag } | null
+  >(null);
 
   // Handle right click menu cleanup
   useEffect(() => {
     const handleOutsideClick = () => setContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
     window.addEventListener("click", handleOutsideClick);
-    return () => window.removeEventListener("click", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("click", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
   }, []);
 
-  // Fetch issues & PRs when a repository folder is expanded of a repo
+  const loadRepoContent = async (repo: Repo) => {
+    if (loadingContent[repo.full_name]) {
+      return;
+    }
+    setLoadingContent((prev) => ({ ...prev, [repo.full_name]: true }));
+    try {
+      const [issuesRes, prsRes] = await Promise.all([
+        fetch(`/api/github/repos/${repo.owner.login}/${repo.name}/issues`),
+        fetch(`/api/github/repos/${repo.owner.login}/${repo.name}/prs`),
+      ]);
+      if (!issuesRes.ok) {
+        throw new Error(`Issue list failed for ${repo.full_name} with HTTP ${issuesRes.status}`);
+      }
+      if (!prsRes.ok) {
+        throw new Error(`PR list failed for ${repo.full_name} with HTTP ${prsRes.status}`);
+      }
+      const issues = await issuesRes.json() as Issue[];
+      const prs = await prsRes.json() as PullRequest[];
+      if (!Array.isArray(issues)) {
+        throw new Error(`Issue list for ${repo.full_name} was not an array.`);
+      }
+      if (!Array.isArray(prs)) {
+        throw new Error(`PR list for ${repo.full_name} was not an array.`);
+      }
+
+      setRepoIssues((prev) => ({ ...prev, [repo.full_name]: issues }));
+      setRepoPRs((prev) => ({ ...prev, [repo.full_name]: prs }));
+    } finally {
+      setLoadingContent((prev) => ({ ...prev, [repo.full_name]: false }));
+    }
+  };
+
+  // Fetch issues & PRs when a repository folder is expanded.
   const handleToggleRepo = async (owner: string, repoName: string, fullName: string) => {
     const isNowExpanded = !expandedRepos[fullName];
     setExpandedRepos((prev) => ({ ...prev, [fullName]: isNowExpanded }));
 
     if (isNowExpanded && !repoIssues[fullName]) {
-      setLoadingContent((prev) => ({ ...prev, [fullName]: true }));
-      try {
-        const issuesRes = await fetch(`/api/github/repos/${owner}/${repoName}/issues`);
-        const prsRes = await fetch(`/api/github/repos/${owner}/${repoName}/prs`);
-        const issues = await issuesRes.json();
-        const prs = await prsRes.json();
-
-        setRepoIssues((prev) => ({ ...prev, [fullName]: issues }));
-        setRepoPRs((prev) => ({ ...prev, [fullName]: prs }));
-      } catch (err) {
-        console.error("Error backing folder tree elements", err);
-      } finally {
-        setLoadingContent((prev) => ({ ...prev, [fullName]: false }));
+      const repo = repos.find((item) => item.full_name === fullName);
+      if (!repo || repo.owner.login !== owner || repo.name !== repoName) {
+        throw new Error(`Repository ${fullName} was not available for sidebar loading.`);
       }
+      await loadRepoContent(repo);
     }
   };
 
   const handleToggleSubfolder = (fullName: string, type: "issues" | "prs") => {
     const key = `${fullName}-${type}`;
     setExpandedSubfolders((prev) => ({ ...prev, [key]: !prev[key] }));
+    const repo = repos.find((item) => item.full_name === fullName);
+    if (!repo) {
+      throw new Error(`Repository ${fullName} was not available for sidebar subfolder loading.`);
+    }
+    if (!repoIssues[fullName] && !loadingContent[fullName]) {
+      void loadRepoContent(repo);
+    }
   };
 
   const handleRightClickRepo = (e: React.MouseEvent, repoFullName: string) => {
     e.preventDefault();
     setContextMenu({
+      type: "repo",
       x: e.clientX,
       y: e.clientY,
       repoFullName
     });
   };
 
+  const openSectionContextMenu = (e: React.MouseEvent, type: "repositories" | "projects") => {
+    e.preventDefault();
+    setContextMenu({
+      type,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  };
+
+  const openProjectContextMenu = (e: React.MouseEvent, projectId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      type: "project",
+      x: e.clientX,
+      y: e.clientY,
+      projectId,
+    });
+  };
+
   // Helper relative time reporter
-  const formatTimeAgo = (isoString: string) => {
+  const formatTimeAgo = (isoString: string | null) => {
+    if (isoString == null) {
+      return "No commits";
+    }
     const diffMs = Date.now() - new Date(isoString).getTime();
     const diffSec = Math.floor(diffMs / 1000);
     const diffMin = Math.floor(diffSec / 60);
@@ -158,31 +223,29 @@ export default function VSCodeSidebar({
     return matchesSearch && matchesProject;
   });
 
-  const nextProjectColor = projectTags.length === 0
-    ? PROJECT_COLORS[0]
-    : PROJECT_COLORS[projectTags.length % PROJECT_COLORS.length];
-
-  const createProject = () => {
-    const name = newProjectName.trim();
-    if (!name) {
-      return;
-    }
-    onCreateProjectTag(name, nextProjectColor);
-    setNewProjectName("");
+  const expandAllRepos = () => {
+    setReposExpanded(true);
+    setExpandedRepos(Object.fromEntries(filteredRepos.map((repo) => [repo.full_name, true])));
   };
 
-  const createContextProject = () => {
-    if (!contextMenu) {
-      return;
-    }
-    const name = contextProjectName.trim();
-    if (!name) {
-      return;
-    }
-    onCreateProjectWithRepo(name, nextProjectColor, contextMenu.repoFullName);
-    setContextProjectName("");
-    setContextMenu(null);
+  const collapseAllRepos = () => {
+    setExpandedRepos({});
+    setExpandedSubfolders({});
   };
+
+  const expandAllProjects = () => {
+    setProjectsExpanded(true);
+    setExpandedProjects(Object.fromEntries(projectTags.map((tag) => [tag.id, true])));
+  };
+
+  const collapseAllProjects = () => {
+    setExpandedProjects(Object.fromEntries(projectTags.map((tag) => [tag.id, false])));
+  };
+
+  const contextMenuStyle = (x: number, y: number) => ({
+    top: `${Math.max(8, Math.min(y, window.innerHeight - 220))}px`,
+    left: `${Math.max(8, Math.min(x, window.innerWidth - 240))}px`
+  });
 
   return (
     <div className="w-full h-full bg-[#252526] flex flex-col select-none text-[#cccccc] relative font-sans">
@@ -229,8 +292,11 @@ export default function VSCodeSidebar({
                 {/* 1. ALL REPOSITORIES ACCORDION PANEL */}
                 <div className={`flex flex-col h-full border-b border-[#3e3e3e] overflow-hidden ${reposExpanded ? "flex-1" : "shrink-0"}`}>
               <div
+                data-testid="sidebar-all-repos-header"
                 onClick={() => setReposExpanded(!reposExpanded)}
+                onContextMenu={(event) => openSectionContextMenu(event, "repositories")}
                 className="flex items-center justify-between py-1.5 px-2.5 bg-[#37373d] text-white text-xs cursor-pointer select-none font-bold shrink-0"
+                title="Right-click for repository tree actions"
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] text-gray-300 w-3 text-center">{reposExpanded ? "▼" : "▶"}</span>
@@ -254,7 +320,7 @@ export default function VSCodeSidebar({
                         <div key={repo.id} className="relative select-none">
                           {/* Repo Folder Trigger */}
                           <div
-                            data-testid={`sidebar-repo-${repo.full_name}`}
+                            data-testid={`sidebar-repo-${normalizeFullName(repo.full_name)}`}
                             onContextMenu={(e) => handleRightClickRepo(e, repo.full_name)}
                             onClick={() =>
                               handleToggleRepo(repo.owner.login, repo.name, repo.full_name)
@@ -280,10 +346,9 @@ export default function VSCodeSidebar({
                                   {repo.full_name}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px] text-gray-500">
-                                  <span title={`Updated ${repo.updated_at}`}>
-                                    Updated {formatTimeAgo(repo.updated_at)}
+                                  <span title={`Latest commit ${repo.latest_commit_at}`}>
+                                    Latest commit {formatTimeAgo(repo.latest_commit_at)}
                                   </span>
-                                  <span>{repo.private ? "Private" : "Public"}</span>
                                   {repoProjects.map((tag) => (
                                     <button
                                       key={tag.id}
@@ -309,15 +374,15 @@ export default function VSCodeSidebar({
                           </div>
 
                           {/* Nested Issue/PR Contents under expanded repository */}
-                          {isExpanded && (
-                            <div className="pl-4 border-l border-gray-700/60 ml-5 my-0.5 space-y-0.5">
-                              {loadingContent[repo.full_name] ? (
-                                <div className="text-gray-500 italic py-1 px-3">Loading directory...</div>
-                              ) : (
-                                <>
-                                  {/* Subfolder: Issues */}
-                                  <div>
+	                          {isExpanded && (
+	                            <div className="pl-4 border-l border-gray-700/60 ml-5 my-0.5 space-y-0.5">
+	                              {loadingContent[repo.full_name] && (
+	                                <div className="text-gray-500 italic py-1 px-3">Loading directory...</div>
+	                              )}
+	                                  {/* Subfolder: Issues */}
+	                                  <div>
                                     <div
+                                      data-testid={`sidebar-subfolder-${normalizeFullName(repo.full_name)}-issues`}
                                       onClick={() => handleToggleSubfolder(repo.full_name, "issues")}
                                       className="flex items-center gap-2.5 py-1 px-2.5 hover:bg-[#2a2d2e] cursor-pointer text-gray-400 hover:text-white"
                                     >
@@ -332,15 +397,20 @@ export default function VSCodeSidebar({
 
                                     {expandedSubfolders[`${repo.full_name}-issues`] && (
                                       <div className="pl-6 border-l border-gray-800 ml-4.5 space-y-0.5 py-0.5">
-                                        {(repoIssues[repo.full_name] || []).length === 0 ? (
-                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
-                                            No issues of this state cached.
+	                                        {loadingContent[repo.full_name] ? (
+	                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
+	                                            Loading issues...
+	                                          </div>
+	                                        ) : (repoIssues[repo.full_name] || []).length === 0 ? (
+	                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
+	                                            No issues of this state cached.
                                           </div>
                                         ) : (
                                           (repoIssues[repo.full_name] || []).map((issue) => {
                                             const isActive = activeTabId === `issue-${repo.full_name}-${issue.number}`;
                                             return (
                                               <div
+                                                data-testid={`sidebar-issue-${normalizeFullName(repo.full_name)}-${issue.number}`}
                                                 key={issue.number}
                                                 onClick={() => {
                                                   onSelectIssue(repo.owner.login, repo.name, issue);
@@ -379,6 +449,7 @@ export default function VSCodeSidebar({
                                   {/* Subfolder: PRs */}
                                   <div>
                                     <div
+                                      data-testid={`sidebar-subfolder-${normalizeFullName(repo.full_name)}-prs`}
                                       onClick={() => handleToggleSubfolder(repo.full_name, "prs")}
                                       className="flex items-center gap-2.5 py-1 px-2.5 hover:bg-[#2a2d2e] cursor-pointer text-gray-400 hover:text-white"
                                     >
@@ -393,15 +464,20 @@ export default function VSCodeSidebar({
 
                                     {expandedSubfolders[`${repo.full_name}-prs`] && (
                                       <div className="pl-6 border-l border-gray-800 ml-4.5 space-y-0.5 py-0.5">
-                                        {(repoPRs[repo.full_name] || []).length === 0 ? (
-                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
-                                            No pull requests listed.
+	                                        {loadingContent[repo.full_name] ? (
+	                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
+	                                            Loading PRs...
+	                                          </div>
+	                                        ) : (repoPRs[repo.full_name] || []).length === 0 ? (
+	                                          <div className="text-gray-600 italic py-1 px-3 text-[11px]">
+	                                            No pull requests listed.
                                           </div>
                                         ) : (
                                           (repoPRs[repo.full_name] || []).map((pr) => {
                                             const isActive = activeTabId === `pr-${repo.full_name}-${pr.number}`;
                                             return (
                                               <div
+                                                data-testid={`sidebar-pr-${normalizeFullName(repo.full_name)}-${pr.number}`}
                                                 key={pr.number}
                                                 onClick={() => {
                                                   onSelectPR(repo.owner.login, repo.name, pr);
@@ -445,11 +521,9 @@ export default function VSCodeSidebar({
                                         )}
                                       </div>
                                     )}
-                                  </div>
-                                </>
-                              )}
-                            </div>
-                          )}
+	                                  </div>
+	                            </div>
+	                          )}
                         </div>
                       );
                     })
@@ -466,8 +540,11 @@ export default function VSCodeSidebar({
                 {/* 2. PROJECT TAGS GROUPING ACCORDION PANEL */}
                 <div className={`flex flex-col h-full border-b border-[#3e3e3e] overflow-hidden ${projectsExpanded ? "flex-1" : "shrink-0"}`}>
               <div
+                data-testid="sidebar-projects-header"
                 onClick={() => setProjectsExpanded(!projectsExpanded)}
+                onContextMenu={(event) => openSectionContextMenu(event, "projects")}
                 className="flex items-center justify-between py-1 px-2.5 bg-[#37373d] text-white text-xs cursor-pointer select-none font-bold shrink-0"
+                title="Right-click for project tree actions"
               >
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] text-gray-300 w-3 text-center">{projectsExpanded ? "▼" : "▶"}</span>
@@ -477,27 +554,6 @@ export default function VSCodeSidebar({
 
               {projectsExpanded && (
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 custom-scrollbar">
-                  <div className="p-1.5 border border-[#3e3e3e]/70 bg-[#1e1e1f] rounded space-y-1.5">
-                    <input
-                      value={newProjectName}
-                      onChange={(event) => setNewProjectName(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          createProject();
-                        }
-                      }}
-                      placeholder="New project name"
-                      className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
-                    />
-                    <button
-                      type="button"
-                      onClick={createProject}
-                      className="w-full px-2 py-1 text-[11px] font-mono text-left bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
-                    >
-                      Create Project
-                    </button>
-                  </div>
                   {projectTags.length === 0 ? (
                     <div className="text-gray-500 italic px-6 py-2">No projects yet.</div>
                   ) : (
@@ -507,6 +563,8 @@ export default function VSCodeSidebar({
                       return (
                       <div key={tag.id} className="group/tag select-none mb-1">
                         <div
+                          data-testid={`sidebar-project-${tag.id}`}
+                          onContextMenu={(event) => openProjectContextMenu(event, tag.id)}
                           className={`flex items-center justify-between py-1 px-3 cursor-pointer rounded text-[11.5px] transition-all ${
                             activeProjectDashboardId === tag.id
                               ? "bg-[#094771] text-white border-l-2 border-[#007acc] rounded-none"
@@ -627,8 +685,95 @@ export default function VSCodeSidebar({
         </div>
       )}
 
-      {/* PopUp Custom Right-Click Context Menu for Repository Actions */}
+      {/* Right-click context menus */}
       {contextMenu && (() => {
+        const menuClass = "fixed bg-[#1c1c1c] border border-gray-700/80 rounded shadow-2xl py-1 z-[100] w-56 text-xs select-none";
+        const menuButtonClass = "w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer";
+
+        if (contextMenu.type === "repositories") {
+          return (
+            <div
+              role="menu"
+              className={menuClass}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button role="menuitem" type="button" onClick={() => { openRepositoryExplorer(); setContextMenu(null); }} className={menuButtonClass}>
+                Open Repositories Dashboard
+              </button>
+              <button role="menuitem" type="button" onClick={() => { expandAllRepos(); setContextMenu(null); }} className={menuButtonClass}>
+                Expand all repos
+              </button>
+              <button role="menuitem" type="button" onClick={() => { collapseAllRepos(); setContextMenu(null); }} className={menuButtonClass}>
+                Collapse all repos
+              </button>
+            </div>
+          );
+        }
+
+        if (contextMenu.type === "projects") {
+          return (
+            <div
+              role="menu"
+              className={menuClass}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button role="menuitem" type="button" onClick={() => { openProjectsDashboard(); setContextMenu(null); }} className={menuButtonClass}>
+                Open Projects Dashboard
+              </button>
+              <button role="menuitem" type="button" onClick={() => { expandAllProjects(); setContextMenu(null); }} className={menuButtonClass}>
+                Expand all projects
+              </button>
+              <button role="menuitem" type="button" onClick={() => { collapseAllProjects(); setContextMenu(null); }} className={menuButtonClass}>
+                Collapse all projects
+              </button>
+            </div>
+          );
+        }
+
+        if (contextMenu.type === "project") {
+          const project = projectTags.find((tag) => tag.id === contextMenu.projectId);
+          if (!project) {
+            throw new Error(`context menu project missing: ${contextMenu.projectId}`);
+          }
+          return (
+            <div
+              role="menu"
+              className={menuClass}
+              style={contextMenuStyle(contextMenu.x, contextMenu.y)}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button role="menuitem" type="button" onClick={() => { openProject(project.id); setContextMenu(null); }} className={menuButtonClass}>
+                Open Project Dashboard
+              </button>
+              <button role="menuitem" type="button" onClick={() => { setExpandedProjects((current) => ({ ...current, [project.id]: true })); setContextMenu(null); }} className={menuButtonClass}>
+                Expand project
+              </button>
+              <button role="menuitem" type="button" onClick={() => { setExpandedProjects((current) => ({ ...current, [project.id]: false })); setContextMenu(null); }} className={menuButtonClass}>
+                Collapse project
+              </button>
+              <button
+                role="menuitem"
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setAssignmentTarget({ type: "project", project });
+                  setContextMenu(null);
+                }}
+                onClick={() => {
+                  setAssignmentTarget({ type: "project", project });
+                  setContextMenu(null);
+                }}
+                className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer border-t border-gray-800"
+              >
+                Manage Project
+              </button>
+            </div>
+          );
+        }
+
         const menuRepo = repos.find((repo) => repo.full_name === contextMenu.repoFullName);
         if (!menuRepo) {
           throw new Error(`context menu repo missing: ${contextMenu.repoFullName}`);
@@ -636,21 +781,24 @@ export default function VSCodeSidebar({
 
         return (
           <div
-            className="fixed bg-[#1c1c1c] border border-gray-700/80 rounded shadow-2xl py-1 z-[100] w-56 text-xs select-none"
-            style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+            role="menu"
+            className={menuClass}
+            style={contextMenuStyle(contextMenu.x, contextMenu.y)}
             onClick={(e) => e.stopPropagation()}
           >
             <button
+              role="menuitem"
               type="button"
               onClick={() => {
                 openRepo(contextMenu.repoFullName);
                 setContextMenu(null);
               }}
-              className="w-full px-3 py-1.5 text-left text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors cursor-pointer"
+              className={menuButtonClass}
             >
               Open Repo Dashboard
             </button>
             <a
+              role="menuitem"
               data-testid="context-open-github"
               href={menuRepo.html_url}
               target="_blank"
@@ -660,59 +808,31 @@ export default function VSCodeSidebar({
             >
               Open in GitHub
             </a>
-            <div className="px-3 py-1.5 border-y border-gray-800 text-[10px] font-mono text-gray-500 uppercase leading-none font-semibold">
-              Add to Project
-            </div>
-            <div className="p-2 space-y-1.5 border-b border-gray-800">
-              <input
-                data-testid="context-create-project-input"
-                value={contextProjectName}
-                onChange={(event) => setContextProjectName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    createContextProject();
-                  }
-                }}
-                placeholder="New project name"
-                className="w-full bg-[#111] border border-[#3e3e3e] rounded px-2 py-1 text-[11px] text-white font-mono outline-none focus:border-[#007acc]"
-              />
-              <button
-                data-testid="context-create-project-button"
-                type="button"
-                onClick={createContextProject}
-                className="w-full px-2 py-1 text-left text-[11px] font-mono bg-[#094771] hover:bg-[#0e5f95] text-white rounded cursor-pointer"
-              >
-                Create and Add
-              </button>
-            </div>
-            {projectTags.length === 0 ? (
-              <div className="px-3 py-2 text-gray-500 italic">No existing projects.</div>
-            ) : (
-              projectTags.map((tag) => {
-                const isAdded = tag.repos.includes(contextMenu.repoFullName);
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    onClick={() => {
-                      onAddProjectTag(tag.name, contextMenu.repoFullName);
-                      setContextMenu(null);
-                    }}
-                    className="w-full text-left px-3 py-1.5 text-gray-300 hover:bg-[#007acc] hover:text-white transition-colors flex items-center justify-between cursor-pointer"
-                  >
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tag.color }} />
-                      <span className="break-words">{tag.name}</span>
-                    </div>
-                    {isAdded && <span className="text-[10px] text-emerald-400 font-bold shrink-0">Added</span>}
-                  </button>
-                );
-              })
-            )}
+            <button
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setAssignmentTarget({ type: "repo", repo: menuRepo });
+                setContextMenu(null);
+              }}
+              className={menuButtonClass}
+            >
+              Manage Projects
+            </button>
           </div>
         );
       })()}
+      <ProjectAssignmentDialog
+        target={assignmentTarget}
+        repos={repos}
+        projectTags={projectTags}
+        onClose={() => setAssignmentTarget(null)}
+        onOpenProject={openProject}
+        onAddProjectTag={onAddProjectTag}
+        onCreateProjectWithRepo={onCreateProjectWithRepo}
+        onRemoveRepoFromTag={onRemoveRepoFromTag}
+        onDeleteProjectTag={onDeleteProjectTag}
+      />
     </div>
   );
 }
